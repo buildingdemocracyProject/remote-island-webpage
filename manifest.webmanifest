@@ -1,6 +1,6 @@
 {
-    "name": "remote-island-app",
-    "short_name": "remote-island-app",
+    "name": "Remote island app",
+    "short_name": "Remote island app",
     "start_url": "index.html",
     "display": "fullscreen",
     "background_color": "#231F20",
