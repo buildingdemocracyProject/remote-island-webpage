@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5882912: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5882973: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5883037: function() {return Module.webglContextAttributes.powerPreference;},  
- 5883095: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5883150: function($0) {performance.now = function() { return $0; };},  
- 5883198: function($0) {performance.now = function() { return $0; };},  
- 5883246: function() {performance.now = Module['emscripten_get_now_backup'];}
+  5882688: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5882749: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5882813: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5882871: function() {Module['emscripten_get_now_backup'] = performance.now;},  
+ 5882926: function($0) {performance.now = function() { return $0; };},  
+ 5882974: function($0) {performance.now = function() { return $0; };},  
+ 5883022: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -15917,7 +15917,7 @@ var ASM_CONSTS = {
       return type;
     }
 
-  function _loadData(instanceId, id) {
+  function _loadData(id) {
           let db = window.db;
           if (!db) {
               console.error("Database not open!");
@@ -15929,14 +15929,16 @@ var ASM_CONSTS = {
           let request = store.get(UTF8ToString(id));
   
           request.onsuccess = function(event) {
-              let data = event.target.result ? event.target.result.data : "null";
-              // Call back to Unity with the instanceId and jsonData
-              Module.ccall('OnDataLoaded', null, ['number', 'string'], [instanceId, data]);
+              let data = event.target.result;
+              let jsonData = data ? data.data : "null";
+  
+              // Send JSON data directly back to Unity
+              Module.SendMessage("ExternalTools", "OnDataLoadedCallback", jsonData);
           };
   
           request.onerror = function(event) {
               console.error("Failed to load data:", event.target.error);
-              Module.ccall('OnDataLoaded', null, ['number', 'string'], [instanceId, "null"]);
+              Module.SendMessage("ExternalTools", "OnDataLoadedCallback", "null");
           };
       }
 
