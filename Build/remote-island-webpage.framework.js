@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5882224: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5882285: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5882349: function() {return Module.webglContextAttributes.powerPreference;},  
- 5882407: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5882462: function($0) {performance.now = function() { return $0; };},  
- 5882510: function($0) {performance.now = function() { return $0; };},  
- 5882558: function() {performance.now = Module['emscripten_get_now_backup'];}
+  5882912: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5882973: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5883037: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5883095: function() {Module['emscripten_get_now_backup'] = performance.now;},  
+ 5883150: function($0) {performance.now = function() { return $0; };},  
+ 5883198: function($0) {performance.now = function() { return $0; };},  
+ 5883246: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -10218,6 +10218,50 @@ var ASM_CONSTS = {
       abort('native code called abort()');
     }
 
+  function _clearDatabase() {
+      const DB_NAME = "SORIDatabase";
+      
+      // Close the database if open
+      if (window.db) {
+          window.db.close();
+      }
+  
+      // Request to delete the database
+      const deleteRequest = indexedDB.deleteDatabase(DB_NAME);
+  
+      deleteRequest.onsuccess = function() {
+          console.log("Database deleted successfully.");
+      };
+  
+      deleteRequest.onerror = function(event) {
+          console.error("Failed to delete database:", event.target.error);
+      };
+  
+      deleteRequest.onblocked = function() {
+          console.warn("Database deletion blocked, likely because it's open in another tab.");
+      };
+  }
+
+  function _deleteData(id) {
+          let db = window.db;
+          if (!db) {
+              console.error("Database not open!");
+              return;
+          }
+  
+          let transaction = db.transaction("gameData", "readwrite");
+          let store = transaction.objectStore("gameData");
+          store.delete(Pointer_stringify(id));
+  
+          transaction.oncomplete = function() {
+              console.log("Data deleted successfully.");
+          };
+  
+          transaction.onerror = function(event) {
+              console.error("Failed to delete data:", event.target.error);
+          };
+      }
+
   var readAsmConstArgsArray = [];
   function readAsmConstArgs(sigPtr, buf) {
       ;
@@ -15873,6 +15917,78 @@ var ASM_CONSTS = {
       return type;
     }
 
+  function _loadData(instanceId, id) {
+          let db = window.db;
+          if (!db) {
+              console.error("Database not open!");
+              return;
+          }
+  
+          let transaction = db.transaction("gameData", "readonly");
+          let store = transaction.objectStore("gameData");
+          let request = store.get(UTF8ToString(id));
+  
+          request.onsuccess = function(event) {
+              let data = event.target.result ? event.target.result.data : "null";
+              // Call back to Unity with the instanceId and jsonData
+              Module.ccall('OnDataLoaded', null, ['number', 'string'], [instanceId, data]);
+          };
+  
+          request.onerror = function(event) {
+              console.error("Failed to load data:", event.target.error);
+              Module.ccall('OnDataLoaded', null, ['number', 'string'], [instanceId, "null"]);
+          };
+      }
+
+  function _openDatabase() {
+          if (!window.db) {
+              let request = indexedDB.open("SORIDatabase", 1);
+  
+              request.onupgradeneeded = function(event) {
+                  let db = event.target.result;
+                  if (!db.objectStoreNames.contains("gameData")) {
+                      db.createObjectStore("gameData", { keyPath: "id" });
+                  }
+              };
+  
+              request.onsuccess = function(event) {
+                  window.db = event.target.result;
+                  console.log("Database opened successfully.");
+              };
+  
+              request.onerror = function(event) {
+                  console.error("Database failed to open:", event.target.error);
+              };
+          }
+      }
+
+  function _saveData(id, jsonData) {
+          let db = window.db;
+          if (!db) {
+              console.error("Database not open!");
+              return;
+          }
+  
+          let transaction = db.transaction("gameData", "readwrite");
+          let store = transaction.objectStore("gameData");
+  
+          // Store the JSON data directly as a string
+          let dataObject = {
+              id: UTF8ToString(id),
+              data: UTF8ToString(jsonData)
+          };
+  
+          let request = store.put(dataObject);
+  
+          request.onsuccess = function() {
+              console.log("Data saved successfully.");
+          };
+  
+          request.onerror = function(event) {
+              console.error("Failed to save data:", event.target.error);
+          };
+      }
+
   function _setTempRet0(val) {
       setTempRet0(val);
     }
@@ -16606,6 +16722,8 @@ var asmLibraryArg = {
   "_munmap_js": __munmap_js,
   "_tzset_js": __tzset_js,
   "abort": _abort,
+  "clearDatabase": _clearDatabase,
+  "deleteData": _deleteData,
   "emscripten_asm_const_int": _emscripten_asm_const_int,
   "emscripten_asm_const_int_sync_on_main_thread": _emscripten_asm_const_int_sync_on_main_thread,
   "emscripten_cancel_main_loop": _emscripten_cancel_main_loop,
@@ -16940,6 +17058,9 @@ var asmLibraryArg = {
   "js_html_utpWebSocketRecv": _js_html_utpWebSocketRecv,
   "js_html_utpWebSocketSend": _js_html_utpWebSocketSend,
   "llvm_eh_typeid_for": _llvm_eh_typeid_for,
+  "loadData": _loadData,
+  "openDatabase": _openDatabase,
+  "saveData": _saveData,
   "setTempRet0": _setTempRet0,
   "strftime": _strftime
 };
