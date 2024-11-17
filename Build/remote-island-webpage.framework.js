@@ -15946,7 +15946,6 @@ var ASM_CONSTS = {
           let db = window.db;
           if (!db) {
               console.error("Database not open!");
-              Module.SendMessage("ExternalTools", "OnDataLoadBatchComplete", "false");
               return;
           }
   
