@@ -15946,36 +15946,39 @@ var ASM_CONSTS = {
           let db = window.db;
           if (!db) {
               console.error("Database not open!");
+              Module.SendMessage("ExternalTools", "OnDataLoadBatchComplete", "false");
               return;
           }
   
           let transaction = db.transaction("gameData", "readonly");
           let store = transaction.objectStore("gameData");
   
-          let requestsuccess = true;
-          let indexVal = 0;
-          while (requestsuccess){
+          let indexVal = 0; // Start from index 0
   
+          function loadNext() {
               let request = store.get(UTF8ToString(id) + indexVal);
   
               request.onsuccess = function(event) {
                   let data = event.target.result;
-                  let jsonData = data ? data.data : "null";
-      
-                  // Send JSON data directly back to Unity
-                  Module.SendMessage("ExternalTools", "OnDataLoadedCallback", jsonData);
-                  indexVal++;
+                  if (data) {
+                      let jsonData = data.data;
+  
+                      // Send JSON data directly back to Unity
+                      Module.SendMessage("ExternalTools", "OnDataLoadedCallback", jsonData);
+  
+                      // Load the next item
+                      indexVal++;
+                      loadNext();
+                  }
               };
-      
+  
               request.onerror = function(event) {
-                  requestsuccess = false;
-                  console.error("Failed to load data:", event.target.error);
-                  Module.SendMessage("ExternalTools", "OnDataLoadedCallback", "null");
+                  console.error("Error while loading data:", event.target.error);
               };
           }
-          
   
-          
+          // Start the batch loading process
+          loadNext();
       }
 
   function _openDatabase() {
