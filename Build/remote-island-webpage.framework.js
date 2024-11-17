@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5882688: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5882749: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5882813: function() {return Module.webglContextAttributes.powerPreference;},  
- 5882871: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5882926: function($0) {performance.now = function() { return $0; };},  
- 5882974: function($0) {performance.now = function() { return $0; };},  
- 5883022: function() {performance.now = Module['emscripten_get_now_backup'];}
+  5882800: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5882861: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5882925: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5882983: function() {Module['emscripten_get_now_backup'] = performance.now;},  
+ 5883038: function($0) {performance.now = function() { return $0; };},  
+ 5883086: function($0) {performance.now = function() { return $0; };},  
+ 5883134: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -15942,6 +15942,42 @@ var ASM_CONSTS = {
           };
       }
 
+  function _loadDataBatch(id) {
+          let db = window.db;
+          if (!db) {
+              console.error("Database not open!");
+              return;
+          }
+  
+          let transaction = db.transaction("gameData", "readonly");
+          let store = transaction.objectStore("gameData");
+  
+          let requestsuccess = true;
+          let indexVal = 0;
+          while (requestsuccess){
+  
+              let request = store.get(UTF8ToString(id) + indexVal);
+  
+              request.onsuccess = function(event) {
+                  let data = event.target.result;
+                  let jsonData = data ? data.data : "null";
+      
+                  // Send JSON data directly back to Unity
+                  Module.SendMessage("ExternalTools", "OnDataLoadedCallback", jsonData);
+                  indexVal++;
+              };
+      
+              request.onerror = function(event) {
+                  requestsuccess = false;
+                  console.error("Failed to load data:", event.target.error);
+                  Module.SendMessage("ExternalTools", "OnDataLoadedCallback", "null");
+              };
+          }
+          
+  
+          
+      }
+
   function _openDatabase() {
           if (!window.db) {
               let request = indexedDB.open("SORIDatabase", 1);
@@ -15971,6 +16007,7 @@ var ASM_CONSTS = {
               return;
           }
   
+          // for future maybe we can divide the object stores?
           let transaction = db.transaction("gameData", "readwrite");
           let store = transaction.objectStore("gameData");
   
@@ -17061,6 +17098,7 @@ var asmLibraryArg = {
   "js_html_utpWebSocketSend": _js_html_utpWebSocketSend,
   "llvm_eh_typeid_for": _llvm_eh_typeid_for,
   "loadData": _loadData,
+  "loadDataBatch": _loadDataBatch,
   "openDatabase": _openDatabase,
   "saveData": _saveData,
   "setTempRet0": _setTempRet0,
