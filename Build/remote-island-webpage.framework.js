@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5882800: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5882861: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5882925: function() {return Module.webglContextAttributes.powerPreference;},  
- 5882983: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5883038: function($0) {performance.now = function() { return $0; };},  
+  5882848: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5882909: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5882973: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5883031: function() {Module['emscripten_get_now_backup'] = performance.now;},  
  5883086: function($0) {performance.now = function() { return $0; };},  
- 5883134: function() {performance.now = Module['emscripten_get_now_backup'];}
+ 5883134: function($0) {performance.now = function() { return $0; };},  
+ 5883182: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -15946,39 +15946,39 @@ var ASM_CONSTS = {
           let db = window.db;
           if (!db) {
               console.error("Database not open!");
+              Module.SendMessage("ExternalTools", "OnDataLoadBatchComplete", "false");
               return;
           }
   
           let transaction = db.transaction("gameData", "readonly");
           let store = transaction.objectStore("gameData");
   
-          let indexVal = 0; // Start from index 0
+          let cursorRequest = store.openCursor();
+          let allData = []; // Collect all data here
   
-          function loadNext() {
-              let request = store.get(UTF8ToString(id) + indexVal);
+          cursorRequest.onsuccess = function(event) {
+              let cursor = event.target.result;
   
-              request.onsuccess = function(event) {
-                  let data = event.target.result;
-                  if (data) {
-                      let jsonData = data.data;
+              if (cursor) {
+                  // Add current entry to the batch
+                  allData.push(cursor.value.data);
   
-                      // Send JSON data directly back to Unity
-                      Module.SendMessage("ExternalTools", "OnDataLoadedCallback", jsonData);
+                  // Advance cursor to next entry
+                  cursor.continue();
+              } else {
+                  // Cursor is done, send data back to Unity
+                  console.log("All data loaded:", allData);
   
-                      // Load the next item
-                      console.log("data sent on index" + indexVal + jsonData);
-                      indexVal++;
-                      loadNext();
-                  }
-              };
+                  // Serialize allData as JSON and send it to Unity
+                  let jsonData = JSON.stringify(allData);
+                  Module.SendMessage("ExternalTools", "OnAllDataLoaded", jsonData);
+              }
+          };
   
-              request.onerror = function(event) {
-                  console.error("Error while loading data:", event.target.error);
-              };
-          }
-  
-          // Start the batch loading process
-          loadNext();
+          cursorRequest.onerror = function(event) {
+              console.error("Error while loading all data:", event.target.error);
+              Module.SendMessage("ExternalTools", "OnDataLoadBatchComplete", "false");
+          };
       }
 
   function _openDatabase() {
