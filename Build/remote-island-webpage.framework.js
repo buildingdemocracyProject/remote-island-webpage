@@ -15966,6 +15966,7 @@ var ASM_CONSTS = {
                       Module.SendMessage("ExternalTools", "OnDataLoadedCallback", jsonData);
   
                       // Load the next item
+                      console.debug("data sent on index" + indexVal + jsonData);
                       indexVal++;
                       loadNext();
                   }
