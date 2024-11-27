@@ -86,18 +86,36 @@
 
       loadingBar.style.display = "block";
 
+      var unityInstance = null; // Keep a reference to the Unity instance
+
       var script = document.createElement("script");
       script.src = loaderUrl;
       script.onload = () => {
         createUnityInstance(canvas, config, (progress) => {
           progressBarFull.style.width = 100 * progress + "%";
-        }).then((unityInstance) => {
-          window.unityInstance = unityInstance;
+        }).then((instance) => {
+          unityInstance = instance;
           loadingBar.style.display = "none";
         }).catch((message) => {
           alert(message);
         });
       };
+      window.onbeforeunload = () => {
+    return "Are you sure to leave this page?";
+        };
+
+        window.addEventListener("popstate", function (event) {
+    // Prevent the browser from going back
+    event.preventDefault();
+
+    // Notify Unity of the back button press
+    if (typeof Module !== 'undefined' && Module.SendMessage) {
+      Module.SendMessage('ExternalTools', 'OnBackButtonPressed');
+    }
+  });
+
+  // Push a dummy state to prevent browser navigation
+  window.history.pushState(null, document.title, window.location.href);
       document.body.appendChild(script);
     </script>
   </body>
