@@ -108,10 +108,7 @@
     // Prevent the browser from going back
     event.preventDefault();
 
-    // Notify Unity of the back button press
-    if (typeof Module !== 'undefined' && Module.SendMessage) {
-      Module.SendMessage('ExternalTools', 'OnBackButtonPressed');
-    }
+    unityInstance.SendMessage('ExternalTools', 'OnBackButtonPressed');
   });
 
   // Push a dummy state to prevent browser navigation
