@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5907872: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5907933: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5907997: function() {return Module.webglContextAttributes.powerPreference;},  
- 5908055: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5908110: function($0) {performance.now = function() { return $0; };},  
- 5908158: function($0) {performance.now = function() { return $0; };},  
- 5908206: function() {performance.now = Module['emscripten_get_now_backup'];}
+  5907936: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5907997: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5908061: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5908119: function() {Module['emscripten_get_now_backup'] = performance.now;},  
+ 5908174: function($0) {performance.now = function() { return $0; };},  
+ 5908222: function($0) {performance.now = function() { return $0; };},  
+ 5908270: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -15991,6 +15991,14 @@ var ASM_CONSTS = {
           }
       }
 
+  function _pushState(stateNamePtr) {
+          // Convert Unity strings to JavaScript strings
+          var stateName = UTF8ToString(stateNamePtr);
+          
+          // Push the state to the browser's history
+          window.history.pushState({ name: stateName }, stateName, '');
+      }
+
   function _saveData(storeName, id, jsonData) {
           let db = window.db;
           if (!db) {
@@ -16023,6 +16031,17 @@ var ASM_CONSTS = {
   function _setTempRet0(val) {
       setTempRet0(val);
     }
+
+  function _setupPopStateListener() {
+  
+          window.addEventListener('popstate', function(event) {
+              // Check if the Unity callback function exists
+              if (typeof unityInstance !== 'undefined' && unityInstance != null) {
+                  var state = event.state ? event.state.name : "";
+                  Module.SendMessage('ExternalTools', "OnPopState", state);
+              }
+          });
+      }
 
   function __isLeapYear(year) {
         return year%4 === 0 && (year%100 !== 0 || year%400 === 0);
@@ -17091,8 +17110,10 @@ var asmLibraryArg = {
   "llvm_eh_typeid_for": _llvm_eh_typeid_for,
   "loadDataBatch": _loadDataBatch,
   "openDatabase": _openDatabase,
+  "pushState": _pushState,
   "saveData": _saveData,
   "setTempRet0": _setTempRet0,
+  "setupPopStateListener": _setupPopStateListener,
   "strftime": _strftime
 };
 var asm = createWasm();
