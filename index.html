@@ -83,7 +83,6 @@
         meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
         document.getElementsByTagName('head')[0].appendChild(meta);
       }
-
       loadingBar.style.display = "block";
 
       var unityInstance = null; // Keep a reference to the Unity instance
@@ -104,15 +103,11 @@
     return "Are you sure to leave this page?";
         };
 
-        window.addEventListener("popstate", function (event) {
-    // Prevent the browser from going back
-    event.preventDefault();
-
+      window.addEventListener("popstate", function (event) {
+          // Push a dummy state to prevent browser navigation
+    window.history.pushState(null, document.title, window.location.href);
     unityInstance.SendMessage('ExternalTools', 'OnBackButtonPressed');
   });
-
-  // Push a dummy state to prevent browser navigation
-  window.history.pushState(null, document.title, window.location.href);
       document.body.appendChild(script);
     </script>
   </body>
