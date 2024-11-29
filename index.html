@@ -21,6 +21,7 @@
     </div>
     <script>
       window.addEventListener("load", function () {
+        window.history.pushState({}, '')
         if ("serviceWorker" in navigator) {
           navigator.serviceWorker.register("ServiceWorker.js");
         }
@@ -105,7 +106,7 @@
 
       window.addEventListener("popstate", function (event) {
           // Push a dummy state to prevent browser navigation
-    window.history.pushState(null, document.title, window.location.href);
+          window.history.pushState({}, '')
     unityInstance.SendMessage('ExternalTools', 'OnBackButtonPressed');
   });
       document.body.appendChild(script);
