@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  6312768: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 6312829: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 6312893: function() {return Module.webglContextAttributes.powerPreference;},  
- 6312951: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 6313006: function($0) {performance.now = function() { return $0; };},  
- 6313054: function($0) {performance.now = function() { return $0; };},  
- 6313102: function() {performance.now = Module['emscripten_get_now_backup'];}
+  5031184: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5031245: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5031309: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5031367: function() {Module['emscripten_get_now_backup'] = performance.now;},  
+ 5031422: function($0) {performance.now = function() { return $0; };},  
+ 5031470: function($0) {performance.now = function() { return $0; };},  
+ 5031518: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -2148,35 +2148,118 @@ var ASM_CONSTS = {
       return demangleAll(js);
     }
 
-  function _ChangeTeam(sessionIdPtr, currentTeamIdPtr, newTeamIdPtr) {
+  function _AcceptQuest(sessionIdPtr, teamIdPtr, questIndex, taskCount) {
       const sessionId = UTF8ToString(sessionIdPtr);
-      const currentTeamId = UTF8ToString(currentTeamIdPtr);
-      const newTeamId = UTF8ToString(newTeamIdPtr);
+      const teamId = UTF8ToString(teamIdPtr);
       const user = firebase.auth().currentUser;
   
       if (!user) {
           console.error("User not authenticated!");
-          Module.SendMessage("FirebaseTeams", "OnTeamChanged", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
           return;
       }
   
-      const userDisplayName = user.displayName;
-      const currentTeamRef = firebase.database().ref(`Sessions/${sessionId}/Teams/${currentTeamId}/Members/${userDisplayName}`);
-      const newTeamRef = firebase.database().ref(`Sessions/${sessionId}/Teams/${newTeamId}/Members/${userDisplayName}`);
+      const questRef = firebase.database().ref(`Sessions/${sessionId}/Quests/${teamId}/${questIndex}`);
   
-      // Remove from current team and add to new team
-      currentTeamRef.remove().then(() => {
-          console.log(`✅ Removed ${userDisplayName} from team ${currentTeamId}`);
+      questRef.once("value").then(snapshot => {
+          if (snapshot.exists()) {
+              console.warn("Quest already accepted.");
+              return;
+          }
   
-          return newTeamRef.set(true);
+          const questData = {
+              Owner: user.displayName,
+              IsVerified: false,
+              IsCompleted: false,
+              Tasks: Array(taskCount).fill(0)  // Create a task list of length taskCount, filled with 0
+          };
+  
+          return questRef.set(questData);
       }).then(() => {
-          console.log(`✅ Added ${userDisplayName} to team ${newTeamId}`);
-          Module.SendMessage("FirebaseTeams", "OnTeamJoined", JSON.stringify({ Successful: true, NewTeamID: newTeamId }));
+          console.log("Quest accepted!");
       }).catch(error => {
-          console.error("❌ Error changing teams:", error);
-          Module.SendMessage("FirebaseTeams", "OnTeamJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          console.error("Error accepting quest:", error);
       });
   }
+
+  function _ChangeTask(sessionIdPtr, teamIdPtr, questIndex, taskJsonPtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const teamId = UTF8ToString(teamIdPtr);
+      const tasksJson = UTF8ToString(taskJsonPtr);  // Receive as JSON string from Unity
+      const newTasks = JSON.parse(tasksJson); // Convert back into an array of integers
+  
+       console.log("Received JSON string:", tasksJson);
+  
+      const taskRef = firebase.database().ref(`Sessions/${sessionId}/Quests/${teamId}/${questIndex}/Tasks`);
+  
+      taskRef.set(newTasks).then(() => {
+          console.log("Tasks updated:", newTasks);
+      }).catch(error => {
+          console.error("Error updating tasks:", error);
+      });
+  }
+
+  function _CompleteQuest(sessionIdPtr, teamIdPtr, questIndex, isCompleted) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const teamId = UTF8ToString(teamIdPtr);
+      const isComplete = isCompleted === 1; // Convert from C-style integer boolean
+  
+      const questRef = firebase.database().ref(`Sessions/${sessionId}/Quests/${teamId}/${questIndex}/IsCompleted`);
+  
+      questRef.set(isComplete).then(() => {
+          console.log(`Quest ${questIndex} marked as ${isComplete ? "completed" : "incomplete"}`);
+      }).catch(error => {
+          console.error("Error updating quest status:", error);
+      });
+  }
+
+  function _ConfirmQuestCompletion(sessionIdPtr, teamIdPtr, questIndex) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const teamId = UTF8ToString(teamIdPtr);
+          const user = firebase.auth().currentUser;
+  
+          if (!user) {
+              console.error("❌ User not authenticated!");
+              Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+              return;
+          }
+  
+          const sessionRef = firebase.database().ref(`Sessions/${sessionId}`);
+  
+          // Fetch session details to check if the user is the owner
+          sessionRef.once("value").then(snapshot => {
+              if (!snapshot.exists()) {
+                  console.error("❌ Session not found.");
+                  Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "Session does not exist." }));
+                  return;
+              }
+  
+              const sessionData = snapshot.val();
+              const sessionOwner = sessionData.Owner || "";
+  
+              // Ensure the user is the session owner
+              if (user.displayName !== sessionOwner) {
+                  console.error("❌ Unauthorized: Only the session owner can confirm quest completion.");
+                  Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "Only the session owner can confirm quests." }));
+                  return;
+              }
+  
+              // Reference to the quest in the specified team
+              const questRef = firebase.database().ref(`Sessions/${sessionId}/Quests/${teamId}/${questIndex}`);
+  
+              // Update IsVerified to true
+              questRef.update({ IsVerified: true }).then(() => {
+                  console.log(`✅ Quest ${questIndex} for Team ${teamId} has been verified.`);
+                  Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: true, ID: "Verified" }));
+              }).catch(error => {
+                  console.error("❌ Error confirming quest:", error);
+                  Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              });
+  
+          }).catch(error => {
+              console.error("❌ Error retrieving session data:", error);
+              Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          });
+      }
 
   function _CreateSession(sessionIdPtr, usernamePtr) {
       const sessionId = UTF8ToString(sessionIdPtr);
@@ -2184,36 +2267,39 @@ var ASM_CONSTS = {
       const user = firebase.auth().currentUser;
   
       if (!user) {
-        console.error("❌ User not authenticated!");
-        Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
-        return;
+          console.error("❌ User not authenticated!");
+          Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
       }
   
-      const sessionRef = firebase.database().ref("Sessions/" + sessionId);
-      const userSessionRef = firebase.database().ref("Users/" + username + "/Previous_Sessions/" + sessionId);
+      const userId = user.uid;  // Use UID instead of username
+      const sessionRef = firebase.database().ref(`Sessions/${sessionId}`);
+      const userSessionRef = firebase.database().ref(`Users/${username}/Previous_Sessions/${sessionId}`);
   
       // Check if the session already exists
       sessionRef.once("value").then(snapshot => {
-        if (snapshot.exists()) {
-          console.log("❌ Session already exists!");
-          Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "Session already exists." }));
-          return;
-        }
+          if (snapshot.exists()) {
+              console.log("❌ Session already exists!");
+              Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "Session already exists." }));
+              return;
+          }
   
-        // Create the session and add it to the user's previous sessions
-        return sessionRef.set({
-          Owner: username,
-          Players: { [username]: true }, // Owner is automatically a player
-          CreatedAt: Date.now()
-        }).then(() => userSessionRef.set(true)); // Store session under the user's Previous_Sessions
-      }).then(() => {
-        console.log("✅ Session created successfully!");
-        Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: true, ID: sessionId }));
-      }).catch(error => {
-        console.error("❌ Error creating session:", error);
-        Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          // Create session with UID as player key
+          return sessionRef.set({
+              Owner: username,
+              Players: { [userId]: { displayName: username } },  // Store username inside player object
+              CreatedAt: Date.now()
+          }).then(() =>
+            {
+                userSessionRef.set(true); // Add to user's session history
+                console.log("✅ Session created successfully!");
+                Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: true, ID: sessionId, Owner: username }));
+            }).catch(error => {
+          console.error("❌ Error creating session:", error);
+          Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          })
       });
-    }
+  }
 
   function _CreateTeam(sessionIdPtr, teamNamePtr) {
           const sessionId = UTF8ToString(sessionIdPtr);
@@ -2235,7 +2321,6 @@ var ASM_CONSTS = {
               Members: { [user.displayName]: true }, // Start with creator as the first member
               TeamPoints: 0,
               TeamLevel: 0,
-              QuestsAccepted: []
           };
   
           teamRef.set(newTeam).then(() => {
@@ -2247,57 +2332,210 @@ var ASM_CONSTS = {
           });
       }
 
-  function _ExitFullscreen() {
-          // get fullscreen object
-          var doc = window.document;
-          var objFullScreen = doc.fullscreenElement || doc.mozFullScreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement;
+  function _DeleteMessage(sessionIdPtr, timestampPtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const timestampStr = UTF8ToString(timestampPtr);
+      const timestamp = BigInt(timestampStr);
+      const user = firebase.auth().currentUser;
   
-          if (objFullScreen)
-          {
-              if (document.exitFullscreen) document.exitFullscreen();
-              else if (document.msExitFullscreen) document.msExitFullscreen();
-              else if (document.mozCancelFullScreen) document.mozCancelFullScreen();
-              else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-          }
+      if (!user) {
+          console.error("❌ User not authenticated!");
+          Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
       }
-
-  function _FetchTeams(sessionIdPtr) {
-          const sessionId = UTF8ToString(sessionIdPtr);
-          const user = firebase.auth().currentUser;
   
-          if (!user) {
-              console.error("User not authenticated!");
-              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+      const messageRef = firebase.database().ref(`Sessions/${sessionId}/Chats/General/${timestamp}`);
+      const sessionRef = firebase.database().ref(`Sessions/${sessionId}/Owner`);
+  
+      // Retrieve session owner
+      sessionRef.once("value").then(sessionSnapshot => {
+          if (!sessionSnapshot.exists()) {
+              console.warn(`⚠️ Session ${sessionId} not found.`);
+              Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: "Session not found." }));
               return;
           }
   
-          const teamsRef = firebase.database().ref(`Sessions/${sessionId}/Teams`);
+          const sessionOwner = sessionSnapshot.val();
   
-          teamsRef.once("value").then(snapshot => {
+          // Retrieve message to check if it exists
+          messageRef.once("value").then(snapshot => {
               if (!snapshot.exists()) {
-                  console.log("No teams found.");
-                  Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "No teams found." }));
+                  console.warn(`⚠️ Message with timestamp ${timestamp} not found.`);
+                  Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: "Message not found." }));
+                  return;
+              }
+              if (sessionOwner !== user.displayName) {
+              console.error("❌ Unauthorized: Only the session owner can delete messages.");
+              Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: "Only the session owner can delete messages." }));
+              return;
+              }
+  
+              // Perform deletion
+              messageRef.remove().then(() => {
+                  console.log(`✅ Message deleted: ${timestamp}`);
+                  Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: true, ID: timestampStr }));
+              }).catch(error => {
+                  console.error("❌ Error deleting message:", error);
+                  Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              });
+  
+          }).catch(error => {
+              console.error("❌ Error retrieving message:", error);
+              Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          });
+  
+      }).catch(error => {
+          console.error("❌ Error retrieving session owner:", error);
+          Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+      });
+      }
+
+  function _DeleteTeam(sessionIdPtr, teamIdPtr) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const teamId = UTF8ToString(teamIdPtr);
+          const user = firebase.auth().currentUser;
+  
+          if (!user) {
+              console.error("❌ User not authenticated!");
+              Module.SendMessage("FirebaseHostManager", "OnTeamDeleted", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+              return;
+          }
+  
+          const sessionRef = firebase.database().ref(`Sessions/${sessionId}`);
+  
+          // Fetch session details to check if the user is the owner
+          sessionRef.once("value").then(snapshot => {
+              if (!snapshot.exists()) {
+                  console.error("❌ Session not found.");
+                  Module.SendMessage("FirebaseHostManager", "OnTeamDeleted", JSON.stringify({ Successful: false, ErrorMessage: "Session does not exist." }));
                   return;
               }
   
-              const teams = snapshot.val();
-              const teamsList = Object.entries(teams).map(([teamId, data]) => ({
-                  TeamID: teamId,
-                  TeamName: data.TeamName,
-                  Members: Object.keys(data.Members || {}), // Convert Firebase object to an array
-                  TeamPoints: data.TeamPoints || 0,
-                  TeamLevel: data.TeamLevel || 0,
-                  QuestAcceptedIndex: data.QuestsAccepted || []
-              }));
+              const sessionData = snapshot.val();
+              const sessionOwner = sessionData.Owner || "";
   
-              console.log("Fetched teams:", teamsList);
-              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: true, Teams: teamsList }));
+              // Check if the current user is the owner
+              if (user.displayName !== sessionOwner) {
+                  console.error("❌ Unauthorized: Only the session owner can delete teams.");
+                  Module.SendMessage("FirebaseHostManager", "OnTeamDeleted", JSON.stringify({ Successful: false, ErrorMessage: "Only the session owner can delete teams." }));
+                  return;
+              }   
+  
+              // Proceed to delete the team
+              const teamRef = firebase.database().ref(`Sessions/${sessionId}/Teams/${teamId}`);
+              teamRef.remove().then(() => {
+                  console.log(`✅ Team ${teamId} has been deleted.`);
+                  Module.SendMessage("FirebaseHostManager", "OnTeamDeleted", JSON.stringify({ Successful: true }));
+              }).catch(error => {
+                  console.error("❌ Error deleting team:", error);
+                  Module.SendMessage("FirebaseHostManager", "OnTeamDeleted", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              });
   
           }).catch(error => {
-              console.error("Error fetching teams:", error);
-              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              console.error("❌ Error retrieving session data:", error);
+              Module.SendMessage("FirebaseHostManager", "OnTeamDeleted", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
           });
       }
+
+  function _DenyQuestCompletion(sessionIdPtr, teamIdPtr, questIndex) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const teamId = UTF8ToString(teamIdPtr);
+          const user = firebase.auth().currentUser;
+  
+          if (!user) {
+              console.error("❌ User not authenticated!");
+              Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+              return;
+          }
+  
+          const sessionRef = firebase.database().ref(`Sessions/${sessionId}`);
+  
+          sessionRef.once("value").then(snapshot => {
+              if (!snapshot.exists()) {
+                  console.error("❌ Session not found!");
+                  Module.SendMessage("FirebaFirebaseHostManagerseQuests", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "Session not found." }));
+                  return;
+              }
+  
+              const sessionData = snapshot.val();
+              const hostName = sessionData.Owner;
+  
+              if (user.displayName !== hostName) {
+                  console.error("❌ Unauthorized: Only the host can deny quest completion.");
+                  Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "Only the host can deny quests." }));
+                  return;
+              }
+  
+              const questRef = firebase.database().ref(`Sessions/${sessionId}/Quests/${teamId}/${questIndex}`);
+  
+              questRef.once("value").then(questSnapshot => {
+                  if (!questSnapshot.exists()) {
+                      console.error("❌ Quest not found!");
+                      Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: "Quest not found." }));
+                      return;
+                  }
+  
+                  const questData = questSnapshot.val();
+                  const resetTasks = questData.Tasks ? questData.Tasks.map(() => 0) : [];
+  
+                  questRef.update({
+                      IsCompleted: false,
+                      Tasks: resetTasks
+                  }).then(() => {
+                      console.log(`✅ Quest ${questIndex} denied for team ${teamId}. Tasks reset.`);
+                      Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: true, ID: "Denied" }));
+                  }).catch(error => {
+                      console.error("❌ Error denying quest:", error);
+                      Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+                  });
+  
+              }).catch(error => {
+                  console.error("❌ Error retrieving quest:", error);
+                  Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              });
+  
+          }).catch(error => {
+              console.error("❌ Error retrieving session:", error);
+              Module.SendMessage("FirebaseHostManager", "OnQuestVerified", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          });
+      }
+
+  function _FetchTeams(sessionIdPtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const user = firebase.auth().currentUser;
+  
+      if (!user) {
+          console.error("User not authenticated!");
+          Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
+      }
+  
+      const teamsRef = firebase.database().ref(`Sessions/${sessionId}/Teams`);
+  
+      teamsRef.once("value").then(snapshot => {
+          if (!snapshot.exists()) {
+              console.log("No teams found.");
+              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "No teams found." }));
+              return;
+          }
+  
+          const teams = snapshot.val();
+          const teamsList = Object.entries(teams).map(([teamId, data]) => ({
+              TeamID: teamId,
+              TeamName: data.TeamName,
+              Members: Object.keys(data.Members || {}),
+              TeamPoints: data.TeamPoints || 0,
+              TeamLevel: data.TeamLevel || 0
+          }));
+  
+          console.log("Fetched teams:", teamsList);
+          Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: true, Teams: teamsList }));
+  
+      }).catch(error => {
+          console.error("Error fetching teams:", error);
+          Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+      });
+  }
 
   function _GetJSMemoryInfo(totalJSptr, usedJSptr) {
       if (performance.memory) {
@@ -2323,15 +2561,6 @@ var ASM_CONSTS = {
           });
           console.log("🔥 Firebase initialized");
         }
-      }
-
-  function _IsFullscreen() {
-          // get fullscreen object
-          var doc = window.document;
-          var objFullScreen = doc.fullscreenElement || doc.mozFullScreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement;
-  
-          // check full screen elemenet is not null!
-          return objFullScreen != null;
       }
 
   var JS_Accelerometer = null;
@@ -4631,13 +4860,6 @@ var ASM_CONSTS = {
   		HEAPF64[outHeight >> 3] = Module.SystemInfo.height;
   	}
 
-  function _JS_SystemInfo_GetStreamingAssetsURL(buffer, bufferSize) 
-  	{
-  		if (buffer)
-  			stringToUTF8(Module.streamingAssetsUrl, buffer, bufferSize);
-  		return lengthBytesUTF8(Module.streamingAssetsUrl);
-  	}
-
   function _JS_SystemInfo_HasAstcHdr()
       {
         var ext = GLctx.getExtension('WEBGL_compressed_texture_astc');
@@ -4660,11 +4882,6 @@ var ASM_CONSTS = {
   function _JS_SystemInfo_HasWebGL() 
   	{
   		return Module.SystemInfo.hasWebGL;
-  	}
-
-  function _JS_SystemInfo_IsMobile() 
-  	{
-  		return Module.SystemInfo.mobile;
   	}
 
   function _JS_UnityEngineShouldQuit() {
@@ -4957,33 +5174,39 @@ var ASM_CONSTS = {
   
       if (!user) {
           console.error("❌ User not authenticated!");
-          Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
           return;
       }
   
-      const sessionRef = firebase.database().ref(`Sessions/${sessionId}`);
-      const userSessionRef = firebase.database().ref("Users/" + username + "/Previous_Sessions");
+      const userName = user.displayName
+      const userId = user.uid;  // Use UID instead of username
+      const ownerRef = firebase.database().ref(`Sessions/${sessionId}/Owner`);
+      const sessionRef = firebase.database().ref(`Sessions/${sessionId}/Players`);
+      const userSessionRef = firebase.database().ref(`Users/${userName}/Previous_Sessions`);
   
       // Check if session exists
-      sessionRef.once("value").then(snapshot => {
-          if (!snapshot.exists()) {
-              console.log("❌ Session not found!");
-              Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: "Session does not exist." }));
+      ownerRef.once("value").then(sessionSnapshot => {
+          if (!sessionSnapshot.exists()) {
+              console.warn(`⚠️ Session ${sessionId} not found.`);
+              Module.SendMessage("FirebaseChat", "OnMessageDeleted", JSON.stringify({ Successful: false, ErrorMessage: "Session not found." }));
               return;
           }
   
-          // Add player to session
-          return sessionRef.child("Players").child(username).set(true).then(() => {
-              // Add this session to Previous_Sessions without overwriting existing data
-              return userSessionRef.update({ [sessionId]: true });
-          });
-      }).then(() => {
-          console.log(`✅ ${username} joined session: ${sessionId}`);
-          Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: true, ID: sessionId }));
-      }).catch(error => {
+          const sessionOwner = sessionSnapshot.val();
+  
+          // Add player to session using UID as key
+          return sessionRef.child(userId).set({ displayName: username }).then(() => {
+              // Add this session to Previous_Sessions
+              userSessionRef.update({ [sessionId]: true });
+  
+              console.log(`✅ ${username} joined session: ${sessionId}`);
+              Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: true, ID: sessionId, Owner: sessionOwner }));
+  
+          }).catch(error => {
           console.error("❌ Error joining session:", error);
-          Module.SendMessage("ExternalTools", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          Module.SendMessage("FirebaseSessions", "OnSessionJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
       });
+      })
   }
 
   function _JoinTeam(sessionIdPtr, teamIdPtr) {
@@ -5007,6 +5230,53 @@ var ASM_CONSTS = {
               Module.SendMessage("FirebaseTeams", "OnTeamJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
           });
   
+      }
+
+  function _KickPlayer(sessionIdPtr, kickedPlayerUIDPtr) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const kickedPlayerUID = UTF8ToString(kickedPlayerUIDPtr);
+          const user = firebase.auth().currentUser;
+  
+          if (!user) {
+              console.error("❌ User not authenticated!");
+              Module.SendMessage("FirebaseHostManager", "OnPlayerKicked", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+              return;
+          }
+  
+          const sessionRef = firebase.database().ref(`Sessions/${sessionId}`);
+  
+          // Fetch session details to check if the user is the owner
+          sessionRef.once("value").then(snapshot => {
+              if (!snapshot.exists()) {
+                  console.error("❌ Session not found.");
+                  Module.SendMessage("FirebaseHostManager", "OnPlayerKicked", JSON.stringify({ Successful: false, ErrorMessage: "Session does not exist." }));
+                  return;
+              }
+  
+              const sessionData = snapshot.val();
+              const sessionOwner = sessionData.Owner || "";
+  
+              // Check if the current user is the owner
+              if (user.displayName !== sessionOwner) {
+                  console.error("❌ Unauthorized: Only the session owner can kick players.");
+                  Module.SendMessage("FirebaseHostManager", "OnPlayerKicked", JSON.stringify({ Successful: false, ErrorMessage: "Only the session owner can kick players." }));
+                  return;
+              }
+  
+          // Proceed to remove the player
+              const playerRef = firebase.database().ref(`Sessions/${sessionId}/Players/${kickedPlayerUID}`);
+              playerRef.remove().then(() => {
+                  console.log(`✅ Player ${kickedPlayerUID} has been kicked.`);
+                  Module.SendMessage("FirebaseHostManager", "OnPlayerKicked", JSON.stringify({ Successful: true, ID: kickedPlayerUID }));
+              }).catch(error => {
+                  console.error("❌ Error kicking player:", error);
+                  Module.SendMessage("FirebaseHostManager", "OnPlayerKicked", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              });
+  
+          }).catch(error => {
+              console.error("❌ Error retrieving session data:", error);
+              Module.SendMessage("FirebaseHostManager", "OnPlayerKicked", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          });
       }
 
   function _ListenForChatUpdates(sessionIdPtr) {
@@ -5049,59 +5319,215 @@ var ASM_CONSTS = {
           window.chatListeners[sessionId] = listener;
       }
 
-  function _ListenForTeamUpdates(sessionIdPtr) {
+  function _ListenForPlayers(sessionIdPtr) {
           const sessionId = UTF8ToString(sessionIdPtr);
           const user = firebase.auth().currentUser;
-  
+      
           if (!user) {
-              console.error("User not authenticated!");
-              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+              console.error("❌ User not authenticated!");
+              Module.SendMessage("FirebasePlayers", "OnPlayersUpdated", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
               return;
           }
-  
-          const teamsRef = firebase.database().ref(`Sessions/${sessionId}/Teams`);
-  
+      
+          const listenerKey = `${sessionId}_playersListener`;
+      
           // Ensure global listener storage exists
-          if (!window.teamListeners) {
-              window.teamListeners = {};
+          if (!window.playersListeners) {
+              window.playersListeners = {};
           }
-  
+      
           // Prevent duplicate listeners
-          if (window.teamListeners[sessionId]) {
-              console.warn(`Already listening for team updates in session: ${sessionId}`);
+          if (window.playersListeners[listenerKey]) {
+              console.warn(`⚠️ Already listening for player updates in session: ${sessionId}`);
               return;
           }
-  
-          console.log(`Listening for team updates in session: ${sessionId}`);
-  
-          const listener = teamsRef.on("value", (snapshot) => {
+      
+          console.log(`📡 Listening for player updates in session: ${sessionId}`);
+      
+          const playersRef = firebase.database().ref(`Sessions/${sessionId}/Players/`);
+      
+          const listener = playersRef.on("value", (snapshot) => {
               if (!snapshot.exists()) {
-                  console.log("No teams found.");
-                  Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "No teams found." }));
+                  console.log("🚫 No players found.");
+                  Module.SendMessage("FirebasePlayers", "OnPlayersUpdated", JSON.stringify({ Successful: true, Players: [] }));
                   return;
               }
-  
-              const teams = snapshot.val();
-              const teamsList = Object.entries(teams).map(([teamId, data]) => ({
-                  TeamID: teamId,
-                  TeamName: data.TeamName,
-                  Members: Object.keys(data.Members || {}),
-                  TeamPoints: data.TeamPoints || 0,
-                  TeamLevel: data.TeamLevel || 0,
-                  QuestAcceptedIndex: data.QuestsAccepted || []
+      
+              const players = snapshot.val();
+              const playerList = Object.entries(players).map(([userId, playerData]) => ({
+                  UID: userId,
+                  DisplayName: playerData.displayName || "Unknown"
               }));
-  
-              console.log("Teams Listened and updated updated:", teamsList);
-              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: true, Teams: teamsList }));
+      
+              console.log("✅ Players updated:", playerList);
+              Module.SendMessage("FirebasePlayers", "OnPlayersUpdated", JSON.stringify({ Successful: true, Players: playerList}));
           });
-  
-          // Store the listener for future removal
-          window.teamListeners[sessionId] = listener;
+      
+          // Store listener reference for cleanup
+          window.playersListeners[listenerKey] = { ref: playersRef, listener };
       }
 
-  function _MakeFullscreen(str) {
-          document.makeFullscreen(UTF8ToString(str));
+  function _ListenForQuestUpdates(sessionIdPtr, teamIdPtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const teamId = UTF8ToString(teamIdPtr);
+      const user = firebase.auth().currentUser;
+  
+      if (!user) {
+          console.error("User not authenticated!");
+          Module.SendMessage("FirebaseQuests", "OnQuestsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
       }
+  
+      const listenerKey = `${sessionId}_questListener`; // Store the active listener per session
+  
+      // Ensure global listener storage exists
+      if (!window.questListeners) {
+          window.questListeners = {};
+      }
+  
+      // If there's an existing listener for a different team, remove it
+      if (window.questListeners[listenerKey] && window.questListeners[listenerKey].teamId !== teamId) {
+          console.log(`Switching quest listener from team ${window.questListeners[listenerKey].teamId} to ${teamId}`);
+          firebase.database().ref(`Sessions/${sessionId}/Quests/${window.questListeners[listenerKey].teamId}`).off("value");
+          delete window.questListeners[listenerKey];
+      }
+  
+      // If we're already listening to this team, do nothing
+      if (window.questListeners[listenerKey] && window.questListeners[listenerKey].teamId === teamId) {
+          console.warn(`Already listening for quest updates in session: ${sessionId}, team: ${teamId}`);
+          return;
+      }
+  
+      console.log(`Listening for quest updates in session: ${sessionId}, team: ${teamId}`);
+  
+      const questsRef = firebase.database().ref(`Sessions/${sessionId}/Quests/${teamId}`);
+  
+      const listener = questsRef.on("value", (snapshot) => {
+          if (!snapshot.exists()) {
+              console.log("No quests found for this team.");
+              Module.SendMessage("FirebaseQuests", "OnQuestsRetrieved", JSON.stringify({ Successful: true, Quests: null }));
+              return;
+          }
+  
+          const quests = snapshot.val();
+          const questList = Object.entries(quests).map(([questIndex, quest]) => ({
+              QuestIndex: parseInt(questIndex),
+              Owner: quest.Owner || "",
+              IsVerified: quest.IsVerified || false,
+              IsCompleted: quest.IsCompleted || false,
+              Tasks: Array.isArray(quest.Tasks) ? quest.Tasks : []
+          }));
+  
+          console.log("Quests updated:", questList);
+          Module.SendMessage("FirebaseQuests", "OnQuestsRetrieved", JSON.stringify({ Successful: true, Quests: questList }));
+      });
+  
+      // Store the new listener
+      window.questListeners[listenerKey] = { teamId, listener };
+  }
+
+  function _ListenForQuestsALL(sessionIdPtr) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const user = firebase.auth().currentUser;
+      
+          if (!user) {
+              console.error("❌ User not authenticated!");
+              Module.SendMessage("FirebaseHostManager", "OnHostQuestsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+              return;
+          }
+      
+          const listenerKey = `${sessionId}_questHostListener`;
+      
+          // Ensure global listener storage exists
+          if (!window.questHostListeners) {
+              window.questHostListeners = {};
+          }
+      
+          // Prevent duplicate listeners
+          if (window.questHostListeners[listenerKey]) {
+              console.warn(`⚠️ Already listening for quest updates in session: ${sessionId}`);
+              return;
+          }
+      
+          console.log(`📡 Listening for ALL quest updates in session: ${sessionId}`);
+      
+          const questsRef = firebase.database().ref(`Sessions/${sessionId}/Quests/`);
+      
+          const listener = questsRef.on("value", (snapshot) => {
+              if (!snapshot.exists()) {
+                  console.log("🚫 No quests found.");
+                  Module.SendMessage("FirebaseHostManager", "OnHostQuestsRetrieved", JSON.stringify({ Successful: true, Quests: [] }));
+                  return;
+              }
+      
+              const quests = snapshot.val();
+              const questList = Object.entries(quests).map(([teamId, teamQuests]) => ({
+                  TeamId: teamId,
+                  Quests: Object.entries(teamQuests).map(([questIndex, quest]) => ({
+                      QuestIndex: parseInt(questIndex),
+                      Owner: quest.Owner || "",
+                      IsVerified: quest.IsVerified || false,
+                      IsCompleted: quest.IsCompleted || false,
+                      Tasks: Array.isArray(quest.Tasks) ? quest.Tasks : []
+                  }))
+              }));
+      
+              console.log("✅ Quests updated:", questList);
+              Module.SendMessage("FirebaseHostManager", "OnHostQuestsRetrieved", JSON.stringify({ Successful: true, AllQuests: questList }));
+          });
+      
+          // Store listener reference for cleanup
+          window.questHostListeners[listenerKey] = { ref: questsRef, listener };
+      }
+
+  function _ListenForTeamUpdates(sessionIdPtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const user = firebase.auth().currentUser;
+  
+      if (!user) {
+          console.error("User not authenticated!");
+          Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
+      }
+  
+      const teamsRef = firebase.database().ref(`Sessions/${sessionId}/Teams`);
+  
+      // Ensure global listener storage exists
+      if (!window.teamListeners) {
+          window.teamListeners = {};
+      }
+  
+      // Prevent duplicate listeners
+      if (window.teamListeners[sessionId]) {
+          console.warn(`Already listening for team updates in session: ${sessionId}`);
+          return;
+      }
+  
+      console.log(`Listening for team updates in session: ${sessionId}`);
+  
+      const listener = teamsRef.on("value", (snapshot) => {
+          if (!snapshot.exists()) {
+              console.log("No teams found.");
+              Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: false, ErrorMessage: "No teams found." }));
+              return;
+          }
+  
+          const teams = snapshot.val();
+          const teamsList = Object.entries(teams).map(([teamId, data]) => ({
+              TeamID: teamId,
+              TeamName: data.TeamName,
+              Members: Object.keys(data.Members || {}),
+              TeamPoints: data.TeamPoints || 0,
+              TeamLevel: data.TeamLevel || 0
+          }));
+  
+          console.log("Teams updated:", teamsList);
+          Module.SendMessage("FirebaseTeams", "OnTeamsRetrieved", JSON.stringify({ Successful: true, Teams: teamsList }));
+      });
+  
+      // Store the listener for future removal
+      window.teamListeners[sessionId] = listener;
+  }
 
   function _ReadPreviousSessions(usernamePtr) {
       const username = UTF8ToString(usernamePtr);
@@ -5109,7 +5535,7 @@ var ASM_CONSTS = {
   
       if (!user) {
         console.error("❌ User not authenticated!");
-        Module.SendMessage("ExternalTools", "OnUsernamesOfPreviousSessions", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+        Module.SendMessage("FirebaseSessions", "OnUsernamesOfPreviousSessions", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
         return;
       }
   
@@ -5118,7 +5544,7 @@ var ASM_CONSTS = {
       userRef.once("value").then(snapshot => {
         if (!snapshot.exists()) {
           console.log("❌ No previous sessions found.");
-          Module.SendMessage("ExternalTools", "OnUsernamesOfPreviousSessions", JSON.stringify({ Successful: false, ErrorMessage: "No previous sessions found." }));
+          Module.SendMessage("FirebaseSessions", "OnUsernamesOfPreviousSessions", JSON.stringify({ Successful: false, ErrorMessage: "No previous sessions found." }));
           return;
         }
   
@@ -5130,9 +5556,9 @@ var ASM_CONSTS = {
   
         // Loop through each session ID and fetch the owner's username
         sessionIds.forEach(sessionId => {
-          firebase.database().ref("Sessions/" + sessionId).once("value").then(sessionSnapshot => {
+          firebase.database().ref("Sessions/" + sessionId + "/Owner").once("value").then(sessionSnapshot => {
             if (sessionSnapshot.exists()) {
-              const ownerUsername = sessionSnapshot.val().Owner;
+              const ownerUsername = sessionSnapshot.val();
               sessionData.push({ SessionId: sessionId, Owner: ownerUsername });
             } else {
               console.log(`⚠️ Session ${sessionId} not found.`);
@@ -5142,14 +5568,14 @@ var ASM_CONSTS = {
             // When all requests are done, send data to Unity
             if (completedRequests === sessionIds.length) {
               console.log("📤 Sending Previous Sessions & Owners to Unity...");
-              Module.SendMessage("ExternalTools", "OnPreviousSessionsRequested", JSON.stringify({ Successful: true, Sessions: sessionData }));
+              Module.SendMessage("FirebaseSessions", "OnPreviousSessionsRequested", JSON.stringify({ Successful: true, Sessions: sessionData }));
             }
           });
         });
   
       }).catch(error => {
         console.error("❌ Error retrieving previous sessions:", error);
-        Module.SendMessage("ExternalTools", "OnPreviousSessionsRequested", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+        Module.SendMessage("FirebaseSessions", "OnPreviousSessionsRequested", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
       });
     }
 
@@ -5192,6 +5618,65 @@ var ASM_CONSTS = {
                 Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
             });
       }
+
+  function _RemoveFromTeam(sessionIdPtr, currentTeamIdPtr, userNamePtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const currentTeamId = UTF8ToString(currentTeamIdPtr);
+      const user = firebase.auth().currentUser;
+  
+      if (!user) {
+          console.error("User not authenticated!");
+          Module.SendMessage("FirebaseTeams", "OnTeamChanged", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
+      }
+  
+      const userDisplayName = UTF8ToString(userNamePtr);
+      const currentTeamRef = firebase.database().ref(`Sessions/${sessionId}/Teams/${currentTeamId}/Members/${userDisplayName}`);
+  
+      // Remove from current team and add to new team
+      currentTeamRef.remove().then(() => {
+          console.log(`Removed ${userDisplayName} from team ${currentTeamId}`);
+      }).catch(error => {
+          console.error("Error removing from team:", error);
+          Module.SendMessage("FirebaseTeams", "OnTeamJoined", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+      });
+  }
+
+  function _RenameTeam(sessionIdPtr, teamIdPtr, newTeamNamePtr) {
+      const sessionId = UTF8ToString(sessionIdPtr);
+      const teamId = UTF8ToString(teamIdPtr);
+      const newTeamName = UTF8ToString(newTeamNamePtr);
+      const user = firebase.auth().currentUser;
+  
+      if (!user) {
+          console.error("❌ User not authenticated!");
+          Module.SendMessage("FirebaseTeams", "OnTeamRenamed", JSON.stringify({ Successful: false, ErrorMessage: "User is not logged in." }));
+          return;
+      }
+  
+      const teamRef = firebase.database().ref(`Sessions/${sessionId}/Teams/${teamId}`);
+  
+          teamRef.once("value").then(teamSnapshot => {
+              if (!teamSnapshot.exists()) {
+                  console.error("❌ Team does not exist!");
+                  Module.SendMessage("FirebaseTeams", "OnTeamRenamed", JSON.stringify({ Successful: false, ErrorMessage: "Team does not exist." }));
+                  return;
+              }
+  
+              // Update only the TeamName field
+              teamRef.update({ TeamName: newTeamName }).then(() => {
+                  console.log(`✅ Team '${teamId}' renamed to '${newTeamName}'.`);
+                  Module.SendMessage("FirebaseTeams", "OnTeamRenamed", JSON.stringify({ Successful: true }));
+              }).catch(error => {
+                  console.error("❌ Error renaming team:", error);
+                  Module.SendMessage("FirebaseTeams", "OnTeamRenamed", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+              });
+  
+          }).catch(error => {
+              console.error("❌ Error retrieving team:", error);
+              Module.SendMessage("FirebaseTeams", "OnTeamRenamed", JSON.stringify({ Successful: false, ErrorMessage: error.message }));
+          });
+  }
 
   function _RetrieveChat(sessionIdPtr, teamIdPtr, lastTimestampPtr = 0) {
         const sessionId = UTF8ToString(sessionIdPtr);
@@ -5291,6 +5776,57 @@ var ASM_CONSTS = {
           }
       }
 
+  function _StopListeningForPlayers(sessionIdPtr) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const listenerKey = `${sessionId}_playersListener`;
+      
+          if (window.playersListeners && window.playersListeners[listenerKey]) {
+              console.log(`🛑 Stopping player listener for session: ${sessionId}`);
+      
+              // Remove listener from Firebase
+              window.playersListeners[listenerKey].ref.off("value", window.playersListeners[listenerKey].listener);
+      
+              // Remove from stored listeners
+              delete window.playersListeners[listenerKey];
+          } else {
+              console.warn(`⚠️ No active player listener found for session: ${sessionId}`);
+          }
+      }
+
+  function _StopListeningForQuests(sessionIdPtr) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const listenerKey = `${sessionId}_questListener`;
+      
+          if (window.questHostListeners && window.questHostListeners[listenerKey]) {
+              console.log(`🛑 Stopping quest listener for session: ${sessionId}`);
+              
+              // Remove listener from Firebase
+              window.questHostListeners[listenerKey].ref.off("value", window.questHostListeners[listenerKey].listener);
+              
+              // Remove from stored listeners
+              delete window.questHostListeners[listenerKey];
+          } else {
+              console.warn(`⚠️ No active quest listener found for session: ${sessionId}`);
+          }
+      }
+
+  function _StopListeningForQuestsALL(sessionIdPtr) {
+          const sessionId = UTF8ToString(sessionIdPtr);
+          const listenerKey = `${sessionId}_questHostListener`;
+      
+          if (window.questHostListeners && window.questHostListeners[listenerKey]) {
+              console.log(`🛑 Stopping quest listener for session: ${sessionId}`);
+              
+              // Remove listener from Firebase
+              window.questHostListeners[listenerKey].ref.off("value", window.questHostListeners[listenerKey].listener);
+              
+              // Remove from stored listeners
+              delete window.questHostListeners[listenerKey];
+          } else {
+              console.warn(`⚠️ No active quest listener found for session: ${sessionId}`);
+          }
+      }
+
   function _StopListeningForTeamUpdates(sessionIdPtr) {
           const sessionId = UTF8ToString(sessionIdPtr);
           const teamsRef = firebase.database().ref(`Sessions/${sessionId}/Teams`);
@@ -5356,415 +5892,6 @@ var ASM_CONSTS = {
           const response = JSON.stringify({Successful: false, ErrorMessage: error.code });
                 Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
         });
-      }
-
-  var instances = [];
-  function _WebGLInputCreate(canvasId, x, y, width, height, fontsize, text, placeholder, isMultiLine, isPassword, isHidden, isMobile) {
-  
-          var container = document.getElementById(UTF8ToString(canvasId));
-          var canvas = container.getElementsByTagName('canvas')[0];
-  
-          // if container is null and have canvas
-          if (!container && canvas)
-          {
-              // set the container to canvas.parentNode
-              container = canvas.parentNode;
-          }
-  
-          if(canvas)
-          {
-              var scaleX = container.offsetWidth / canvas.width;
-              var scaleY = container.offsetHeight / canvas.height;
-  
-              if(scaleX && scaleY)
-              {
-                  x *= scaleX;
-                  width *= scaleX;
-                  y *= scaleY;
-                  height *= scaleY;
-              }
-          }
-  
-          var input = document.createElement(isMultiLine?"textarea":"input");
-          input.style.position = "absolute";
-  
-          if(isMobile) {
-              input.style.bottom = 1 + "vh";
-              input.style.left = 5 + "vw";
-              input.style.width = 90 + "vw";
-              input.style.height = (isMultiLine? 18 : 10) + "vh";
-              input.style.fontSize = 5 + "vh";
-              input.style.borderWidth = 5 + "px";
-              input.style.borderColor = "#000000";
-          } else {
-              input.style.top = y + "px";
-              input.style.left = x + "px";
-              input.style.width = width + "px";
-              input.style.height = height + "px";
-              input.style.fontSize = fontsize + "px";
-          }
-  
-          input.style.outlineWidth = 1 + 'px';
-          input.style.opacity = isHidden?0:1;
-          input.style.resize = 'none'; // for textarea
-          input.style.padding = '0px 1px';
-          input.style.cursor = "default";
-          input.style.touchAction = 'none';
-  
-          input.spellcheck = false;
-          input.value = UTF8ToString(text);
-          input.placeholder = UTF8ToString(placeholder);
-          input.style.outlineColor = 'black';
-          
-          if(isPassword){
-              input.type = 'password';
-          }
-  
-          if(isMobile) {
-              document.body.appendChild(input);
-          } else {
-              container.appendChild(input);
-          }
-          return instances.push(input) - 1;
-      }
-
-  function _WebGLInputDelete(id){
-          var input = instances[id];
-          input.parentNode.removeChild(input);
-          instances[id] = null;
-      }
-
-  function _WebGLInputEnableTabText(id, enable) {
-          var input = instances[id];
-          input.enableTabText = enable;
-      }
-
-  function _WebGLInputEnterSubmit(id, falg){
-          var input = instances[id];
-          // for enter key
-          input.addEventListener('keydown', function(e) {
-              if ((e.which && e.which === 13) || (e.keyCode && e.keyCode === 13)) {
-                  if(falg)
-                  {
-                      e.preventDefault();
-                      input.blur();
-                  }
-              }
-          });
-      }
-
-  function _WebGLInputFocus(id){
-          var input = instances[id];
-          input.focus();
-      }
-
-  function _WebGLInputForceBlur(id) {
-          var input = instances[id];
-          input.blur();
-      }
-
-  function _WebGLInputInit() {
-          // use WebAssembly.Table : makeDynCall
-          // when enable. dynCall is undefined
-          if(typeof dynCall === "undefined")
-          {
-              // make Runtime.dynCall to undefined
-              Runtime = { dynCall : undefined }
-          }
-          else
-          {
-              // Remove the `Runtime` object from "v1.37.27: 12/24/2017"
-              // if Runtime not defined. create and add functon!!
-              if(typeof Runtime === "undefined") Runtime = { dynCall : dynCall }
-          }
-      }
-
-  function _WebGLInputIsFocus(id) {
-          return instances[id] === document.activeElement;
-      }
-
-  function _WebGLInputMaxLength(id, maxlength){
-          var input = instances[id];
-          input.maxLength = maxlength;
-      }
-
-  function _WebGLInputMobileOnFocusOut(id, focusout) {
-          document.body.addEventListener("focusout", function () {
-              document.body.removeEventListener("focusout", arguments.callee);
-              Runtime.dynCall("vi", focusout, [id]);
-          });
-      }
-
-  function _WebGLInputMobileRegister(touchend) {
-          var id = instances.push(null) - 1;
-  
-          document.body.addEventListener("touchend", function () {
-              document.body.removeEventListener("touchend", arguments.callee);
-              Runtime.dynCall("vi", touchend, [id]);
-          });
-  
-          return id;
-      }
-
-  function _WebGLInputOnBlur(id, cb) {
-          var input = instances[id];
-          input.onblur = function () {
-              (!!Runtime.dynCall) ? Runtime.dynCall("vi", cb, [id]) : (function(a1) {  dynCall_vi.apply(null, [cb, a1]); })(id);
-          };
-      }
-
-  function _WebGLInputOnEditEnd(id, cb){
-          var input = instances[id];
-          input.onchange = function () {
-              var returnStr = input.value;
-              var bufferSize = lengthBytesUTF8(returnStr) + 1;
-              var buffer = _malloc(bufferSize);
-              stringToUTF8(returnStr, buffer, bufferSize);
-              (!!Runtime.dynCall) ? Runtime.dynCall("vii", cb, [id, buffer]) : (function(a1, a2) {  dynCall_vii.apply(null, [cb, a1, a2]); })(id, buffer);
-          };
-      }
-
-  function _WebGLInputOnFocus(id, cb) {
-          var input = instances[id];
-          input.onfocus = function () {
-              (!!Runtime.dynCall) ? Runtime.dynCall("vi", cb, [id]) : (function(a1) {  dynCall_vi.apply(null, [cb, a1]); })(id);
-          };
-      }
-
-  function _WebGLInputOnKeyboardEvent(id, cb){
-          var input = instances[id];
-          var func = function(mode, e) {
-              if (e instanceof KeyboardEvent){
-                  var bufferSize = lengthBytesUTF8(e.key) + 1;
-                  var key = _malloc(bufferSize);
-                  stringToUTF8(e.key, key, bufferSize);
-                  var code = e.code;
-                  var shift = e.shiftKey ? 1 : 0;
-                  var ctrl = e.ctrlKey ? 1 : 0;
-                  var alt = e.altKey ? 1 : 0;
-                  (!!Runtime.dynCall) ? Runtime.dynCall("viiiiiii", cb, [id, mode, key, code, shift, ctrl, alt]) : (function(a1, a2, a3, a4, a5, a6, a7) {  dynCall_viiiiiii.apply(null, [cb, a1, a2, a3, a4, a5, a6, a7]); })(id, mode, key, code, shift, ctrl, alt);
-              }
-          }
-          input.addEventListener('keydown', function(e) { func(1, e); });
-          input.addEventListener('keyup', function(e) { func(2, e); });
-      }
-
-  function _WebGLInputOnValueChange(id, cb){
-          var input = instances[id];
-          input.oninput = function () {
-              var returnStr = input.value;
-              var bufferSize = lengthBytesUTF8(returnStr) + 1;
-              var buffer = _malloc(bufferSize);
-              stringToUTF8(returnStr, buffer, bufferSize);
-              (!!Runtime.dynCall) ? Runtime.dynCall("vii", cb, [id, buffer]) : (function(a1, a2) {  dynCall_vii.apply(null, [cb, a1, a2]); })(id, buffer);
-          };
-      }
-
-  function _WebGLInputSelectionDirection(id){
-          var input = instances[id];
-          return (input.selectionDirection == "backward")?-1:1;
-      }
-
-  function _WebGLInputSelectionEnd(id){
-          var input = instances[id];
-          return input.selectionEnd;
-      }
-
-  function _WebGLInputSelectionStart(id){
-          var input = instances[id];
-          return input.selectionStart;
-      }
-
-  function _WebGLInputSetSelectionRange(id, start, end){
-          var input = instances[id];
-          input.setSelectionRange(start, end);
-      }
-
-  function _WebGLInputTab(id, cb) {
-          var input = instances[id];
-          // for tab key
-          input.addEventListener('keydown', function (e) {
-              if ((e.which && e.which === 9) || (e.keyCode && e.keyCode === 9)) {
-                  e.preventDefault();
-  
-                  // if enable tab text
-                  if(input.enableTabText){
-                      var val = input.value;
-                      var start = input.selectionStart;
-                      var end = input.selectionEnd;
-                      input.value = val.substr(0, start) + '\t' + val.substr(end, val.length);
-                      input.setSelectionRange(start + 1, start + 1);
-                      input.oninput();	// call oninput to exe ValueChange function!!
-                  } else {
-                      (!!Runtime.dynCall) ? Runtime.dynCall("vii", cb, [id, e.shiftKey ? -1 : 1]) : (function(a1, a2) {  dynCall_vii.apply(null, [cb, a1, a2]); })(id, e.shiftKey ? -1 : 1);
-                  }
-              }
-          });
-      }
-
-  function _WebGLInputText(id, text){
-          var input = instances[id];
-          input.value = UTF8ToString(text);
-      }
-
-  function _WebGLWindowGetCanvasName() {
-          var elements = document.getElementsByTagName('canvas');
-          var returnStr = "";
-          if(elements.length >= 1)
-          {
-              returnStr = elements[0].parentNode.id;
-              // workaround : for WebGLTemplate:Minimal temp! body element not have id!
-              if(returnStr == '')
-              {
-                  returnStr = elements[0].parentNode.id = 'WebGLWindow:Canvas:ParentNode';
-              }
-          }
-          var bufferSize = lengthBytesUTF8(returnStr) + 1;
-          var buffer = _malloc(bufferSize);
-          stringToUTF8(returnStr, buffer, bufferSize);
-          return buffer;
-      }
-
-  function _WebGLWindowInit() {
-          // use WebAssembly.Table : makeDynCall
-          // when enable. dynCall is undefined
-          if(typeof dynCall === "undefined")
-          {
-              // make Runtime.dynCall to undefined
-              Runtime = { dynCall : undefined }
-          }
-          else
-          {
-              // Remove the `Runtime` object from "v1.37.27: 12/24/2017"
-              // if Runtime not defined. create and add functon!!
-              if(typeof Runtime === "undefined") Runtime = { dynCall : dynCall }
-          }
-      }
-
-  function _WebGLWindowInjectFullscreen() {
-          document.makeFullscreen = function (id, keepAspectRatio) {
-              // get fullscreen object
-              var getFullScreenObject = function () {
-                  var doc = window.document;
-                  var objFullScreen = doc.fullscreenElement || doc.mozFullScreenElement || doc.webkitFullscreenElement || doc.msFullscreenElement;
-                  return (objFullScreen);
-              }
-  
-              // handle fullscreen event
-              var eventFullScreen = function (callback) {
-                  document.addEventListener("fullscreenchange", callback, false);
-                  document.addEventListener("webkitfullscreenchange", callback, false);
-                  document.addEventListener("mozfullscreenchange", callback, false);
-                  document.addEventListener("MSFullscreenChange", callback, false);
-              }
-  
-              var removeEventFullScreen = function (callback) {
-                  document.removeEventListener("fullscreenchange", callback, false);
-                  document.removeEventListener("webkitfullscreenchange", callback, false);
-                  document.removeEventListener("mozfullscreenchange", callback, false);
-                  document.removeEventListener("MSFullscreenChange", callback, false);
-              }
-  
-              var div = document.createElement("div");
-              document.body.appendChild(div);
-  
-              // save canvas size to originSize
-              var canvas = document.getElementsByTagName('canvas')[0];
-              var originSize = 
-              {
-                  width : canvas.style.width,
-                  height : canvas.style.height,
-              };
-  
-              var fullscreenRoot = document.getElementById(id);
-  
-              // when build with minimal default template
-              // the fullscreenRoot is <body>
-              var isBody = fullscreenRoot.tagName.toLowerCase() == "body";
-              if(isBody)
-              {
-                  // swip the id to div
-                  div.id = fullscreenRoot.id;
-                  fullscreenRoot.id = "";
-                  // overwrite the fullscreen root
-                  fullscreenRoot = canvas;
-              }
-  
-              var beforeParent = fullscreenRoot.parentNode;
-              var beforeStyle = window.getComputedStyle(fullscreenRoot);
-              var beforeWidth = parseInt(beforeStyle.width);
-              var beforeHeight = parseInt(beforeStyle.height);
-  
-              // to keep element index after fullscreen
-              var index = Array.from(beforeParent.children).findIndex(function (v) { return v == fullscreenRoot; });
-              div.appendChild(fullscreenRoot);
-  
-              // recv fullscreen function
-              var fullscreenFunc = function () {
-                  if (getFullScreenObject()) {
-                      if (keepAspectRatio) {
-                          var ratio = Math.min(window.screen.width / beforeWidth, window.screen.height / beforeHeight);
-                          var width = Math.floor(beforeWidth * ratio);
-                          var height = Math.floor(beforeHeight * ratio);
-  
-                          fullscreenRoot.style.width = width + 'px';
-                          fullscreenRoot.style.height = height + 'px';
-                      } else {
-                          fullscreenRoot.style.width = window.screen.width + 'px';
-                          fullscreenRoot.style.height = window.screen.height + 'px';
-                      }
-  
-                      // make canvas size 100% to fix screen size
-                      canvas.style.width = "100%";
-                      canvas.style.height = "100%";
-  
-                  } else {
-                      fullscreenRoot.style.width = beforeWidth + 'px';
-                      fullscreenRoot.style.height = beforeHeight + 'px';
-                      beforeParent.insertBefore(fullscreenRoot, Array.from(beforeParent.children)[index]);
-  
-                      if(isBody)
-                      {
-                          beforeParent.id = div.id;
-                      }
-  
-                      div.parentNode.removeChild(div);
-  
-                      // set canvas size to origin size
-                      canvas.style.width = originSize.width;
-                      canvas.style.height = originSize.height;
-  
-                      // remove this function
-                      removeEventFullScreen(fullscreenFunc);
-                  }
-              }
-  
-              // listener fullscreen event
-              eventFullScreen(fullscreenFunc);
-  
-              if (div.mozRequestFullScreen) div.mozRequestFullScreen();
-              else if (div.webkitRequestFullScreen) div.webkitRequestFullScreen();
-              else if (div.msRequestFullscreen) div.msRequestFullscreen();
-              else if (div.requestFullscreen) div.requestFullscreen();
-          }
-      }
-
-  function _WebGLWindowOnBlur(cb) {
-          window.addEventListener('blur', function () {
-              (!!Runtime.dynCall) ? Runtime.dynCall("v", cb, []) : (function() {  dynCall_v.call(null, cb); })();
-          });
-      }
-
-  function _WebGLWindowOnFocus(cb) {
-          window.addEventListener('focus', function () {
-              (!!Runtime.dynCall) ? Runtime.dynCall("v", cb, []) : (function() {  dynCall_v.call(null, cb); })();
-          });
-      }
-
-  function _WebGLWindowOnResize(cb) {
-          window.addEventListener('resize', function () {
-              (!!Runtime.dynCall) ? Runtime.dynCall("v", cb, []) : (function() {  dynCall_v.call(null, cb); })();
-          });
       }
 
   function ___assert_fail(condition, filename, line, func) {
@@ -10774,50 +10901,6 @@ var ASM_CONSTS = {
   function _abort() {
       abort('native code called abort()');
     }
-
-  function _clearDatabase() {
-      const DB_NAME = "SORIDatabase";
-      
-      // Close the database if open
-      if (window.db) {
-          window.db.close();
-      }
-  
-      // Request to delete the database
-      const deleteRequest = indexedDB.deleteDatabase(DB_NAME);
-  
-      deleteRequest.onsuccess = function() {
-          console.log("Database deleted successfully.");
-      };
-  
-      deleteRequest.onerror = function(event) {
-          console.error("Failed to delete database:", event.target.error);
-      };
-  
-      deleteRequest.onblocked = function() {
-          console.warn("Database deletion blocked, likely because it's open in another tab.");
-      };
-  }
-
-  function _deleteData(id) {
-          let db = window.db;
-          if (!db) {
-              console.error("Database not open!");
-              return;
-          }
-  
-          let transaction = db.transaction("gameData", "readwrite");
-          let store = transaction.objectStore("gameData");
-          store.delete(Pointer_stringify(id));
-  
-          transaction.oncomplete = function() {
-              console.log("Data deleted successfully.");
-          };
-  
-          transaction.onerror = function(event) {
-              console.error("Failed to delete data:", event.target.error);
-          };
-      }
 
   var readAsmConstArgsArray = [];
   function readAsmConstArgs(sigPtr, buf) {
@@ -16417,141 +16500,9 @@ var ASM_CONSTS = {
 
   function _glViewport(x0, x1, x2, x3) { GLctx['viewport'](x0, x1, x2, x3) }
 
-  var GlobalData = {ws:[]};
-  function _js_html_utpWebSocketCreate(sockId, addrData, addrSize) {
-          var addr = new TextDecoder().decode(HEAPU8.subarray(addrData, addrData + addrSize));
-          var sock = new WebSocket(addr);
-          sock.binaryType = "arraybuffer";
-          sock.utpMessageQueue = [];
-          sock.addEventListener('message', function (e) {
-              var data8 = new Uint8Array(e.data);
-              sock.utpMessageQueue.push(data8);
-          });
-          GlobalData.ws[sockId] = sock;
-      }
-
-  function _js_html_utpWebSocketDestroy(sockId) {
-          var sock = GlobalData.ws[sockId];
-          if (sock && (sock.readyState == WebSocket.CONNECTING || sock.readyState == WebSocket.OPEN)) {
-              sock.close();
-          }
-          GlobalData.ws[sockId] = undefined;
-      }
-
-  function _js_html_utpWebSocketIsConnected(sockId) {
-          var sock = GlobalData.ws[sockId];
-          if (!sock)
-              return -1;
-          if (sock.readyState == WebSocket.OPEN)
-              return 1;
-          if (sock.readyState == WebSocket.CONNECTING)
-              return 0;
-          return -1;
-      }
-
-  function _js_html_utpWebSocketRecv(sockId, data, size) {
-          var sock = GlobalData.ws[sockId];
-          if (!sock || sock.readyState != WebSocket.OPEN)
-              return -1;
-          if (sock.utpMessageQueue.length == 0)
-              return 0;
-          var buffer = sock.utpMessageQueue.shift();
-          if (buffer.length > size)
-              return 0;
-          HEAP8.set(buffer, data);
-          return buffer.length;
-      }
-
-  function _js_html_utpWebSocketSend(sockId, data, size) {
-          var sock = GlobalData.ws[sockId];
-          if (!sock || sock.readyState != WebSocket.OPEN)
-              return -1;
-          sock.send(HEAPU8.subarray(data, data + size));
-          return size;
-      }
-
   function _llvm_eh_typeid_for(type) {
       return type;
     }
-
-  function _loadDataBatch(storeName, storeIndex) {
-          let db = window.db;
-          if (!db) {
-              console.error("Database not open!");
-              return;
-          }
-  
-          let transaction = db.transaction(UTF8ToString(storeName), "readonly");
-          let store = transaction.objectStore(UTF8ToString(storeName));
-  
-          let cursorRequest = store.openCursor();
-          let allData = []; // Collect all data here
-  
-          cursorRequest.onsuccess = function(event) {
-              let cursor = event.target.result;
-  
-              if (cursor) {
-                  // Add current entry to the batch
-                  allData.push(cursor.value.data);
-  
-                  // Advance cursor to next entry
-                  cursor.continue();
-              } else {
-                  // Cursor is done, send data back to Unity
-                  console.log("All data loaded:", allData);
-  
-                  // Serialize allData as JSON and send it to Unity
-                  let jsonData = JSON.stringify(allData);
-                  let name = UTF8ToString(storeName)
-                  Module.SendMessage("ExternalTools", "ChangeDataIdentifier", storeIndex);
-                  Module.SendMessage("ExternalTools", "OnAllDataLoaded", jsonData);
-              }
-          };
-  
-          cursorRequest.onerror = function(event) {
-              console.error("Error while loading all data:", event.target.error);
-          };
-      }
-
-  function _openDatabase(profileData, questData, teamData, chatData, lastSessionData) {
-          if (!window.db) {
-              let request = indexedDB.open("SORIDatabase", 1);
-              let profileDataName = UTF8ToString(profileData);
-              let questDataName = UTF8ToString(questData);
-              let teamDataName = UTF8ToString(teamData);
-              let chatDataName = UTF8ToString(chatData);
-              let lastSessionDataName = UTF8ToString(lastSessionData);
-  
-              request.onupgradeneeded = function(event) {
-                  let db = event.target.result;
-                  if (!db.objectStoreNames.contains(profileDataName)) {
-                      db.createObjectStore(profileDataName, { keyPath: "id" });
-                  }
-                  if (!db.objectStoreNames.contains(questDataName)) {
-                      db.createObjectStore(questDataName, { keyPath: "id" });
-                  }
-                  if (!db.objectStoreNames.contains(teamDataName)) {
-                      db.createObjectStore(teamDataName, { keyPath: "id" });
-                  }
-                  if (!db.objectStoreNames.contains(chatDataName)) {
-                      db.createObjectStore(chatDataName, { keyPath: "id" });
-                  }
-                  if (!db.objectStoreNames.contains(lastSessionDataName)) {
-                      db.createObjectStore(lastSessionDataName, { keyPath: "id" });
-                  }
-              };
-  
-              request.onsuccess = function(event) {
-                  window.db = event.target.result;
-                  console.log("Database opened successfully.");
-                  Module.SendMessage("ExternalTools", "OnDatabaseOpened");
-              };
-  
-              request.onerror = function(event) {
-                  console.error("Database failed to open:", event.target.error);
-              };
-          }
-      }
 
   function _pushState(stateNamePtr) {
           // Convert Unity strings to JavaScript strings
@@ -16559,35 +16510,6 @@ var ASM_CONSTS = {
           
           // Push the state to the browser's history
           window.history.pushState({ name: stateName }, stateName, '');
-      }
-
-  function _saveData(storeName, id, jsonData) {
-          let db = window.db;
-          if (!db) {
-              console.error("Database not open!");
-              return;
-          }
-  
-          // for future maybe we can divide the object stores?
-          console.log("Storing data in store " + UTF8ToString(storeName));
-          let transaction = db.transaction(UTF8ToString(storeName), "readwrite");
-          let store = transaction.objectStore(UTF8ToString(storeName));
-  
-          // Store the JSON data directly as a string
-          let dataObject = {
-              id: UTF8ToString(id),
-              data: UTF8ToString(jsonData)
-          };
-  
-          let request = store.put(dataObject);
-  
-          request.onsuccess = function() {
-              console.log("Data saved successfully.");
-          };
-  
-          request.onerror = function(event) {
-              console.error("Failed to save data:", event.target.error);
-          };
       }
 
   function _setTempRet0(val) {
@@ -17157,14 +17079,18 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('fetchSettings');
 }
 var asmLibraryArg = {
-  "ChangeTeam": _ChangeTeam,
+  "AcceptQuest": _AcceptQuest,
+  "ChangeTask": _ChangeTask,
+  "CompleteQuest": _CompleteQuest,
+  "ConfirmQuestCompletion": _ConfirmQuestCompletion,
   "CreateSession": _CreateSession,
   "CreateTeam": _CreateTeam,
-  "ExitFullscreen": _ExitFullscreen,
+  "DeleteMessage": _DeleteMessage,
+  "DeleteTeam": _DeleteTeam,
+  "DenyQuestCompletion": _DenyQuestCompletion,
   "FetchTeams": _FetchTeams,
   "GetJSMemoryInfo": _GetJSMemoryInfo,
   "InitializeFirebase": _InitializeFirebase,
-  "IsFullscreen": _IsFullscreen,
   "JS_Accelerometer_IsRunning": _JS_Accelerometer_IsRunning,
   "JS_Accelerometer_Start": _JS_Accelerometer_Start,
   "JS_Accelerometer_Stop": _JS_Accelerometer_Stop,
@@ -17236,12 +17162,10 @@ var asmLibraryArg = {
   "JS_SystemInfo_GetOS": _JS_SystemInfo_GetOS,
   "JS_SystemInfo_GetPreferredDevicePixelRatio": _JS_SystemInfo_GetPreferredDevicePixelRatio,
   "JS_SystemInfo_GetScreenSize": _JS_SystemInfo_GetScreenSize,
-  "JS_SystemInfo_GetStreamingAssetsURL": _JS_SystemInfo_GetStreamingAssetsURL,
   "JS_SystemInfo_HasAstcHdr": _JS_SystemInfo_HasAstcHdr,
   "JS_SystemInfo_HasCursorLock": _JS_SystemInfo_HasCursorLock,
   "JS_SystemInfo_HasFullscreen": _JS_SystemInfo_HasFullscreen,
   "JS_SystemInfo_HasWebGL": _JS_SystemInfo_HasWebGL,
-  "JS_SystemInfo_IsMobile": _JS_SystemInfo_IsMobile,
   "JS_UnityEngineShouldQuit": _JS_UnityEngineShouldQuit,
   "JS_WebRequest_Abort": _JS_WebRequest_Abort,
   "JS_WebRequest_Create": _JS_WebRequest_Create,
@@ -17254,44 +17178,24 @@ var asmLibraryArg = {
   "JS_WebRequest_SetTimeout": _JS_WebRequest_SetTimeout,
   "JoinSession": _JoinSession,
   "JoinTeam": _JoinTeam,
+  "KickPlayer": _KickPlayer,
   "ListenForChatUpdates": _ListenForChatUpdates,
+  "ListenForPlayers": _ListenForPlayers,
+  "ListenForQuestUpdates": _ListenForQuestUpdates,
+  "ListenForQuestsALL": _ListenForQuestsALL,
   "ListenForTeamUpdates": _ListenForTeamUpdates,
-  "MakeFullscreen": _MakeFullscreen,
   "ReadPreviousSessions": _ReadPreviousSessions,
   "RegisterUser": _RegisterUser,
+  "RemoveFromTeam": _RemoveFromTeam,
+  "RenameTeam": _RenameTeam,
   "RetrieveChat": _RetrieveChat,
   "SendChatMessage": _SendChatMessage,
   "StopListeningForChatUpdates": _StopListeningForChatUpdates,
+  "StopListeningForPlayers": _StopListeningForPlayers,
+  "StopListeningForQuests": _StopListeningForQuests,
+  "StopListeningForQuestsALL": _StopListeningForQuestsALL,
   "StopListeningForTeamUpdates": _StopListeningForTeamUpdates,
   "VerifyUserLogin": _VerifyUserLogin,
-  "WebGLInputCreate": _WebGLInputCreate,
-  "WebGLInputDelete": _WebGLInputDelete,
-  "WebGLInputEnableTabText": _WebGLInputEnableTabText,
-  "WebGLInputEnterSubmit": _WebGLInputEnterSubmit,
-  "WebGLInputFocus": _WebGLInputFocus,
-  "WebGLInputForceBlur": _WebGLInputForceBlur,
-  "WebGLInputInit": _WebGLInputInit,
-  "WebGLInputIsFocus": _WebGLInputIsFocus,
-  "WebGLInputMaxLength": _WebGLInputMaxLength,
-  "WebGLInputMobileOnFocusOut": _WebGLInputMobileOnFocusOut,
-  "WebGLInputMobileRegister": _WebGLInputMobileRegister,
-  "WebGLInputOnBlur": _WebGLInputOnBlur,
-  "WebGLInputOnEditEnd": _WebGLInputOnEditEnd,
-  "WebGLInputOnFocus": _WebGLInputOnFocus,
-  "WebGLInputOnKeyboardEvent": _WebGLInputOnKeyboardEvent,
-  "WebGLInputOnValueChange": _WebGLInputOnValueChange,
-  "WebGLInputSelectionDirection": _WebGLInputSelectionDirection,
-  "WebGLInputSelectionEnd": _WebGLInputSelectionEnd,
-  "WebGLInputSelectionStart": _WebGLInputSelectionStart,
-  "WebGLInputSetSelectionRange": _WebGLInputSetSelectionRange,
-  "WebGLInputTab": _WebGLInputTab,
-  "WebGLInputText": _WebGLInputText,
-  "WebGLWindowGetCanvasName": _WebGLWindowGetCanvasName,
-  "WebGLWindowInit": _WebGLWindowInit,
-  "WebGLWindowInjectFullscreen": _WebGLWindowInjectFullscreen,
-  "WebGLWindowOnBlur": _WebGLWindowOnBlur,
-  "WebGLWindowOnFocus": _WebGLWindowOnFocus,
-  "WebGLWindowOnResize": _WebGLWindowOnResize,
   "__assert_fail": ___assert_fail,
   "__cxa_allocate_exception": ___cxa_allocate_exception,
   "__cxa_begin_catch": ___cxa_begin_catch,
@@ -17350,8 +17254,6 @@ var asmLibraryArg = {
   "_munmap_js": __munmap_js,
   "_tzset_js": __tzset_js,
   "abort": _abort,
-  "clearDatabase": _clearDatabase,
-  "deleteData": _deleteData,
   "emscripten_asm_const_int": _emscripten_asm_const_int,
   "emscripten_asm_const_int_sync_on_main_thread": _emscripten_asm_const_int_sync_on_main_thread,
   "emscripten_cancel_main_loop": _emscripten_cancel_main_loop,
@@ -17614,7 +17516,6 @@ var asmLibraryArg = {
   "invoke_iiiiij": invoke_iiiiij,
   "invoke_iiiijii": invoke_iiiijii,
   "invoke_iiiijjii": invoke_iiiijjii,
-  "invoke_iiiji": invoke_iiiji,
   "invoke_iiijii": invoke_iiijii,
   "invoke_iiijiii": invoke_iiijiii,
   "invoke_iij": invoke_iij,
@@ -17626,13 +17527,11 @@ var asmLibraryArg = {
   "invoke_iijjiiiiii": invoke_iijjiiiiii,
   "invoke_iijjjii": invoke_iijjjii,
   "invoke_iji": invoke_iji,
-  "invoke_ijii": invoke_ijii,
   "invoke_ijji": invoke_ijji,
   "invoke_j": invoke_j,
   "invoke_jdi": invoke_jdi,
   "invoke_jfi": invoke_jfi,
   "invoke_ji": invoke_ji,
-  "invoke_jidi": invoke_jidi,
   "invoke_jii": invoke_jii,
   "invoke_jiii": invoke_jiii,
   "invoke_jiiii": invoke_jiiii,
@@ -17651,15 +17550,12 @@ var asmLibraryArg = {
   "invoke_vidi": invoke_vidi,
   "invoke_viffi": invoke_viffi,
   "invoke_vifi": invoke_vifi,
-  "invoke_vififfii": invoke_vififfii,
   "invoke_vifii": invoke_vifii,
   "invoke_vii": invoke_vii,
   "invoke_viidi": invoke_viidi,
   "invoke_viidiji": invoke_viidiji,
   "invoke_viiffi": invoke_viiffi,
-  "invoke_viiffii": invoke_viiffii,
   "invoke_viifi": invoke_viifi,
-  "invoke_viififfi": invoke_viififfi,
   "invoke_viifii": invoke_viifii,
   "invoke_viifiiffi": invoke_viifiiffi,
   "invoke_viifiiii": invoke_viifiiii,
@@ -17676,11 +17572,9 @@ var asmLibraryArg = {
   "invoke_viiiiiiiiii": invoke_viiiiiiiiii,
   "invoke_viiiiiiiiiiii": invoke_viiiiiiiiiiii,
   "invoke_viiiiiiiiiiiii": invoke_viiiiiiiiiiiii,
-  "invoke_viiiijiii": invoke_viiiijiii,
   "invoke_viiiji": invoke_viiiji,
   "invoke_viiji": invoke_viiji,
   "invoke_viijii": invoke_viijii,
-  "invoke_viijiii": invoke_viijiii,
   "invoke_viijiiijiiii": invoke_viijiiijiiii,
   "invoke_viji": invoke_viji,
   "invoke_vijii": invoke_vijii,
@@ -17690,16 +17584,8 @@ var asmLibraryArg = {
   "invoke_vji": invoke_vji,
   "invoke_vjiiiii": invoke_vjiiiii,
   "invoke_vjjjiiii": invoke_vjjjiiii,
-  "js_html_utpWebSocketCreate": _js_html_utpWebSocketCreate,
-  "js_html_utpWebSocketDestroy": _js_html_utpWebSocketDestroy,
-  "js_html_utpWebSocketIsConnected": _js_html_utpWebSocketIsConnected,
-  "js_html_utpWebSocketRecv": _js_html_utpWebSocketRecv,
-  "js_html_utpWebSocketSend": _js_html_utpWebSocketSend,
   "llvm_eh_typeid_for": _llvm_eh_typeid_for,
-  "loadDataBatch": _loadDataBatch,
-  "openDatabase": _openDatabase,
   "pushState": _pushState,
-  "saveData": _saveData,
   "setTempRet0": _setTempRet0,
   "setupPopStateListener": _setupPopStateListener,
   "strftime": _strftime
@@ -17870,13 +17756,40 @@ var dynCall_jii = Module["dynCall_jii"] = createExportWrapper("dynCall_jii");
 var dynCall_viiiiiiii = Module["dynCall_viiiiiiii"] = createExportWrapper("dynCall_viiiiiiii");
 
 /** @type {function(...*):?} */
+var dynCall_jiiii = Module["dynCall_jiiii"] = createExportWrapper("dynCall_jiiii");
+
+/** @type {function(...*):?} */
+var dynCall_fiiii = Module["dynCall_fiiii"] = createExportWrapper("dynCall_fiiii");
+
+/** @type {function(...*):?} */
+var dynCall_diiii = Module["dynCall_diiii"] = createExportWrapper("dynCall_diiii");
+
+/** @type {function(...*):?} */
+var dynCall_j = Module["dynCall_j"] = createExportWrapper("dynCall_j");
+
+/** @type {function(...*):?} */
+var dynCall_ji = Module["dynCall_ji"] = createExportWrapper("dynCall_ji");
+
+/** @type {function(...*):?} */
+var dynCall_jiii = Module["dynCall_jiii"] = createExportWrapper("dynCall_jiii");
+
+/** @type {function(...*):?} */
+var dynCall_iiji = Module["dynCall_iiji"] = createExportWrapper("dynCall_iiji");
+
+/** @type {function(...*):?} */
+var dynCall_viiiiiiiii = Module["dynCall_viiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiii");
+
+/** @type {function(...*):?} */
 var dynCall_iiiijii = Module["dynCall_iiiijii"] = createExportWrapper("dynCall_iiiijii");
 
 /** @type {function(...*):?} */
-var dynCall_iiiidii = Module["dynCall_iiiidii"] = createExportWrapper("dynCall_iiiidii");
+var dynCall_iiiifii = Module["dynCall_iiiifii"] = createExportWrapper("dynCall_iiiifii");
 
 /** @type {function(...*):?} */
-var dynCall_iiiifii = Module["dynCall_iiiifii"] = createExportWrapper("dynCall_iiiifii");
+var dynCall_vifi = Module["dynCall_vifi"] = createExportWrapper("dynCall_vifi");
+
+/** @type {function(...*):?} */
+var dynCall_viifi = Module["dynCall_viifi"] = createExportWrapper("dynCall_viifi");
 
 /** @type {function(...*):?} */
 var dynCall_viji = Module["dynCall_viji"] = createExportWrapper("dynCall_viji");
@@ -17885,97 +17798,13 @@ var dynCall_viji = Module["dynCall_viji"] = createExportWrapper("dynCall_viji");
 var dynCall_viiji = Module["dynCall_viiji"] = createExportWrapper("dynCall_viiji");
 
 /** @type {function(...*):?} */
-var dynCall_iijiii = Module["dynCall_iijiii"] = createExportWrapper("dynCall_iijiii");
+var dynCall_iiiifi = Module["dynCall_iiiifi"] = createExportWrapper("dynCall_iiiifi");
 
 /** @type {function(...*):?} */
-var dynCall_vijii = Module["dynCall_vijii"] = createExportWrapper("dynCall_vijii");
+var dynCall_iji = Module["dynCall_iji"] = createExportWrapper("dynCall_iji");
 
 /** @type {function(...*):?} */
-var dynCall_viiiji = Module["dynCall_viiiji"] = createExportWrapper("dynCall_viiiji");
-
-/** @type {function(...*):?} */
-var dynCall_iiji = Module["dynCall_iiji"] = createExportWrapper("dynCall_iiji");
-
-/** @type {function(...*):?} */
-var dynCall_iiifii = Module["dynCall_iiifii"] = createExportWrapper("dynCall_iiifii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiifii = Module["dynCall_viiiifii"] = createExportWrapper("dynCall_viiiifii");
-
-/** @type {function(...*):?} */
-var dynCall_fi = Module["dynCall_fi"] = createExportWrapper("dynCall_fi");
-
-/** @type {function(...*):?} */
-var dynCall_vidi = Module["dynCall_vidi"] = createExportWrapper("dynCall_vidi");
-
-/** @type {function(...*):?} */
-var dynCall_viidi = Module["dynCall_viidi"] = createExportWrapper("dynCall_viidi");
-
-/** @type {function(...*):?} */
-var dynCall_vifi = Module["dynCall_vifi"] = createExportWrapper("dynCall_vifi");
-
-/** @type {function(...*):?} */
-var dynCall_ijji = Module["dynCall_ijji"] = createExportWrapper("dynCall_ijji");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiiii = Module["dynCall_iiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_ji = Module["dynCall_ji"] = createExportWrapper("dynCall_ji");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiii = Module["dynCall_viiiiiii"] = createExportWrapper("dynCall_viiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_jjji = Module["dynCall_jjji"] = createExportWrapper("dynCall_jjji");
-
-/** @type {function(...*):?} */
-var dynCall_jdi = Module["dynCall_jdi"] = createExportWrapper("dynCall_jdi");
-
-/** @type {function(...*):?} */
-var dynCall_vijjji = Module["dynCall_vijjji"] = createExportWrapper("dynCall_vijjji");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiiiiii = Module["dynCall_viiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiiiii = Module["dynCall_viiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiij = Module["dynCall_iiiiij"] = createExportWrapper("dynCall_iiiiij");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiiiii = Module["dynCall_iiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiiiiiii = Module["dynCall_viiiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiijii = Module["dynCall_iiijii"] = createExportWrapper("dynCall_iiijii");
-
-/** @type {function(...*):?} */
-var dynCall_jiiii = Module["dynCall_jiiii"] = createExportWrapper("dynCall_jiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iijiiii = Module["dynCall_iijiiii"] = createExportWrapper("dynCall_iijiiii");
-
-/** @type {function(...*):?} */
-var dynCall_jijiii = Module["dynCall_jijiii"] = createExportWrapper("dynCall_jijiii");
-
-/** @type {function(...*):?} */
-var dynCall_viijii = Module["dynCall_viijii"] = createExportWrapper("dynCall_viijii");
-
-/** @type {function(...*):?} */
-var dynCall_iijiiiiii = Module["dynCall_iijiiiiii"] = createExportWrapper("dynCall_iijiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iijjiiiiii = Module["dynCall_iijjiiiiii"] = createExportWrapper("dynCall_iijjiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiijjii = Module["dynCall_iiiijjii"] = createExportWrapper("dynCall_iiiijjii");
-
-/** @type {function(...*):?} */
-var dynCall_iijii = Module["dynCall_iijii"] = createExportWrapper("dynCall_iijii");
+var dynCall_iiiidii = Module["dynCall_iiiidii"] = createExportWrapper("dynCall_iiiidii");
 
 /** @type {function(...*):?} */
 var dynCall_dii = Module["dynCall_dii"] = createExportWrapper("dynCall_dii");
@@ -17984,16 +17813,109 @@ var dynCall_dii = Module["dynCall_dii"] = createExportWrapper("dynCall_dii");
 var dynCall_fii = Module["dynCall_fii"] = createExportWrapper("dynCall_fii");
 
 /** @type {function(...*):?} */
+var dynCall_viiiiiii = Module["dynCall_viiiiiii"] = createExportWrapper("dynCall_viiiiiii");
+
+/** @type {function(...*):?} */
 var dynCall_ifi = Module["dynCall_ifi"] = createExportWrapper("dynCall_ifi");
 
 /** @type {function(...*):?} */
 var dynCall_idi = Module["dynCall_idi"] = createExportWrapper("dynCall_idi");
 
 /** @type {function(...*):?} */
-var dynCall_jiii = Module["dynCall_jiii"] = createExportWrapper("dynCall_jiii");
+var dynCall_vidi = Module["dynCall_vidi"] = createExportWrapper("dynCall_vidi");
+
+/** @type {function(...*):?} */
+var dynCall_fffi = Module["dynCall_fffi"] = createExportWrapper("dynCall_fffi");
+
+/** @type {function(...*):?} */
+var dynCall_ijji = Module["dynCall_ijji"] = createExportWrapper("dynCall_ijji");
+
+/** @type {function(...*):?} */
+var dynCall_jji = Module["dynCall_jji"] = createExportWrapper("dynCall_jji");
+
+/** @type {function(...*):?} */
+var dynCall_jjji = Module["dynCall_jjji"] = createExportWrapper("dynCall_jjji");
+
+/** @type {function(...*):?} */
+var dynCall_fiii = Module["dynCall_fiii"] = createExportWrapper("dynCall_fiii");
 
 /** @type {function(...*):?} */
 var dynCall_diii = Module["dynCall_diii"] = createExportWrapper("dynCall_diii");
+
+/** @type {function(...*):?} */
+var dynCall_iidi = Module["dynCall_iidi"] = createExportWrapper("dynCall_iidi");
+
+/** @type {function(...*):?} */
+var dynCall_iifi = Module["dynCall_iifi"] = createExportWrapper("dynCall_iifi");
+
+/** @type {function(...*):?} */
+var dynCall_viiiiiiiiii = Module["dynCall_viiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_dddi = Module["dynCall_dddi"] = createExportWrapper("dynCall_dddi");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiiiii = Module["dynCall_iiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiiiiii = Module["dynCall_iiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_dji = Module["dynCall_dji"] = createExportWrapper("dynCall_dji");
+
+/** @type {function(...*):?} */
+var dynCall_viiffi = Module["dynCall_viiffi"] = createExportWrapper("dynCall_viiffi");
+
+/** @type {function(...*):?} */
+var dynCall_viiiifi = Module["dynCall_viiiifi"] = createExportWrapper("dynCall_viiiifi");
+
+/** @type {function(...*):?} */
+var dynCall_viiiidi = Module["dynCall_viiiidi"] = createExportWrapper("dynCall_viiiidi");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiiidii = Module["dynCall_iiiiiiidii"] = createExportWrapper("dynCall_iiiiiiidii");
+
+/** @type {function(...*):?} */
+var dynCall_viijii = Module["dynCall_viijii"] = createExportWrapper("dynCall_viijii");
+
+/** @type {function(...*):?} */
+var dynCall_iiifii = Module["dynCall_iiifii"] = createExportWrapper("dynCall_iiifii");
+
+/** @type {function(...*):?} */
+var dynCall_iijiii = Module["dynCall_iijiii"] = createExportWrapper("dynCall_iijiii");
+
+/** @type {function(...*):?} */
+var dynCall_vijii = Module["dynCall_vijii"] = createExportWrapper("dynCall_vijii");
+
+/** @type {function(...*):?} */
+var dynCall_jjii = Module["dynCall_jjii"] = createExportWrapper("dynCall_jjii");
+
+/** @type {function(...*):?} */
+var dynCall_vifii = Module["dynCall_vifii"] = createExportWrapper("dynCall_vifii");
+
+/** @type {function(...*):?} */
+var dynCall_viiiji = Module["dynCall_viiiji"] = createExportWrapper("dynCall_viiiji");
+
+/** @type {function(...*):?} */
+var dynCall_jijii = Module["dynCall_jijii"] = createExportWrapper("dynCall_jijii");
+
+/** @type {function(...*):?} */
+var dynCall_viijiiijiiii = Module["dynCall_viijiiijiiii"] = createExportWrapper("dynCall_viijiiijiiii");
+
+/** @type {function(...*):?} */
+var dynCall_jdi = Module["dynCall_jdi"] = createExportWrapper("dynCall_jdi");
+
+/** @type {function(...*):?} */
+var dynCall_vijjji = Module["dynCall_vijjji"] = createExportWrapper("dynCall_vijjji");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiij = Module["dynCall_iiiiij"] = createExportWrapper("dynCall_iiiiij");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiiiiiji = Module["dynCall_iiiiiiiiiji"] = createExportWrapper("dynCall_iiiiiiiiiji");
+
+/** @type {function(...*):?} */
+var dynCall_vji = Module["dynCall_vji"] = createExportWrapper("dynCall_vji");
 
 /** @type {function(...*):?} */
 var dynCall_iiiiji = Module["dynCall_iiiiji"] = createExportWrapper("dynCall_iiiiji");
@@ -18002,28 +17924,7 @@ var dynCall_iiiiji = Module["dynCall_iiiiji"] = createExportWrapper("dynCall_iii
 var dynCall_viiiiiiiiiiiii = Module["dynCall_viiiiiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiiiiii");
 
 /** @type {function(...*):?} */
-var dynCall_jjii = Module["dynCall_jjii"] = createExportWrapper("dynCall_jjii");
-
-/** @type {function(...*):?} */
-var dynCall_ijii = Module["dynCall_ijii"] = createExportWrapper("dynCall_ijii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiji = Module["dynCall_iiiji"] = createExportWrapper("dynCall_iiiji");
-
-/** @type {function(...*):?} */
-var dynCall_vifii = Module["dynCall_vifii"] = createExportWrapper("dynCall_vifii");
-
-/** @type {function(...*):?} */
-var dynCall_viifi = Module["dynCall_viifi"] = createExportWrapper("dynCall_viifi");
-
-/** @type {function(...*):?} */
-var dynCall_dji = Module["dynCall_dji"] = createExportWrapper("dynCall_dji");
-
-/** @type {function(...*):?} */
-var dynCall_iji = Module["dynCall_iji"] = createExportWrapper("dynCall_iji");
-
-/** @type {function(...*):?} */
-var dynCall_jidi = Module["dynCall_jidi"] = createExportWrapper("dynCall_jidi");
+var dynCall_viidi = Module["dynCall_viidi"] = createExportWrapper("dynCall_viidi");
 
 /** @type {function(...*):?} */
 var dynCall_viddi = Module["dynCall_viddi"] = createExportWrapper("dynCall_viddi");
@@ -18041,31 +17942,58 @@ var dynCall_viifiiffi = Module["dynCall_viifiiffi"] = createExportWrapper("dynCa
 var dynCall_viifiiii = Module["dynCall_viifiiii"] = createExportWrapper("dynCall_viifiiii");
 
 /** @type {function(...*):?} */
-var dynCall_iiiifi = Module["dynCall_iiiifi"] = createExportWrapper("dynCall_iiiifi");
+var dynCall_iijjjii = Module["dynCall_iijjjii"] = createExportWrapper("dynCall_iijjjii");
 
 /** @type {function(...*):?} */
-var dynCall_iijjjii = Module["dynCall_iijjjii"] = createExportWrapper("dynCall_iijjjii");
+var dynCall_viiiiiiiiiii = Module["dynCall_viiiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_iiijii = Module["dynCall_iiijii"] = createExportWrapper("dynCall_iiijii");
+
+/** @type {function(...*):?} */
+var dynCall_iijiiii = Module["dynCall_iijiiii"] = createExportWrapper("dynCall_iijiiii");
+
+/** @type {function(...*):?} */
+var dynCall_jijiii = Module["dynCall_jijiii"] = createExportWrapper("dynCall_jijiii");
+
+/** @type {function(...*):?} */
+var dynCall_iijiiiiii = Module["dynCall_iijiiiiii"] = createExportWrapper("dynCall_iijiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_iijjiiiiii = Module["dynCall_iijjiiiiii"] = createExportWrapper("dynCall_iijjiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_iiiijjii = Module["dynCall_iiiijjii"] = createExportWrapper("dynCall_iiiijjii");
+
+/** @type {function(...*):?} */
+var dynCall_iijii = Module["dynCall_iijii"] = createExportWrapper("dynCall_iijii");
+
+/** @type {function(...*):?} */
+var dynCall_iijji = Module["dynCall_iijji"] = createExportWrapper("dynCall_iijji");
+
+/** @type {function(...*):?} */
+var dynCall_iiddi = Module["dynCall_iiddi"] = createExportWrapper("dynCall_iiddi");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiiiiiiii = Module["dynCall_iiiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_fiiffi = Module["dynCall_fiiffi"] = createExportWrapper("dynCall_fiiffi");
+
+/** @type {function(...*):?} */
+var dynCall_viiififii = Module["dynCall_viiififii"] = createExportWrapper("dynCall_viiififii");
 
 /** @type {function(...*):?} */
 var dynCall_viifii = Module["dynCall_viifii"] = createExportWrapper("dynCall_viifii");
 
 /** @type {function(...*):?} */
-var dynCall_viiffii = Module["dynCall_viiffii"] = createExportWrapper("dynCall_viiffii");
+var dynCall_viiiifii = Module["dynCall_viiiifii"] = createExportWrapper("dynCall_viiiifii");
 
 /** @type {function(...*):?} */
-var dynCall_vififfii = Module["dynCall_vififfii"] = createExportWrapper("dynCall_vififfii");
+var dynCall_fi = Module["dynCall_fi"] = createExportWrapper("dynCall_fi");
 
 /** @type {function(...*):?} */
-var dynCall_iiiiiji = Module["dynCall_iiiiiji"] = createExportWrapper("dynCall_iiiiiji");
-
-/** @type {function(...*):?} */
-var dynCall_iiiffji = Module["dynCall_iiiffji"] = createExportWrapper("dynCall_iiiffji");
-
-/** @type {function(...*):?} */
-var dynCall_iiijjji = Module["dynCall_iiijjji"] = createExportWrapper("dynCall_iiijjji");
-
-/** @type {function(...*):?} */
-var dynCall_viijiii = Module["dynCall_viijiii"] = createExportWrapper("dynCall_viijiii");
+var dynCall_iiifi = Module["dynCall_iiifi"] = createExportWrapper("dynCall_iiifi");
 
 /** @type {function(...*):?} */
 var dynCall_viiiiiiiiiiii = Module["dynCall_viiiiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiiiii");
@@ -18092,64 +18020,13 @@ var dynCall_viidiji = Module["dynCall_viidiji"] = createExportWrapper("dynCall_v
 var dynCall_viidjii = Module["dynCall_viidjii"] = createExportWrapper("dynCall_viidjii");
 
 /** @type {function(...*):?} */
-var dynCall_viiiidi = Module["dynCall_viiiidi"] = createExportWrapper("dynCall_viiiidi");
-
-/** @type {function(...*):?} */
-var dynCall_fiii = Module["dynCall_fiii"] = createExportWrapper("dynCall_fiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiidii = Module["dynCall_iiiiiiidii"] = createExportWrapper("dynCall_iiiiiiidii");
+var dynCall_ddiii = Module["dynCall_ddiii"] = createExportWrapper("dynCall_ddiii");
 
 /** @type {function(...*):?} */
 var dynCall_di = Module["dynCall_di"] = createExportWrapper("dynCall_di");
 
 /** @type {function(...*):?} */
-var dynCall_iifi = Module["dynCall_iifi"] = createExportWrapper("dynCall_iifi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiifi = Module["dynCall_viiiifi"] = createExportWrapper("dynCall_viiiifi");
-
-/** @type {function(...*):?} */
-var dynCall_iiifi = Module["dynCall_iiifi"] = createExportWrapper("dynCall_iiifi");
-
-/** @type {function(...*):?} */
-var dynCall_fffi = Module["dynCall_fffi"] = createExportWrapper("dynCall_fffi");
-
-/** @type {function(...*):?} */
-var dynCall_jji = Module["dynCall_jji"] = createExportWrapper("dynCall_jji");
-
-/** @type {function(...*):?} */
-var dynCall_iidi = Module["dynCall_iidi"] = createExportWrapper("dynCall_iidi");
-
-/** @type {function(...*):?} */
-var dynCall_diiii = Module["dynCall_diiii"] = createExportWrapper("dynCall_diiii");
-
-/** @type {function(...*):?} */
-var dynCall_dddi = Module["dynCall_dddi"] = createExportWrapper("dynCall_dddi");
-
-/** @type {function(...*):?} */
-var dynCall_viiffi = Module["dynCall_viiffi"] = createExportWrapper("dynCall_viiffi");
-
-/** @type {function(...*):?} */
-var dynCall_viiifi = Module["dynCall_viiifi"] = createExportWrapper("dynCall_viiifi");
-
-/** @type {function(...*):?} */
-var dynCall_viififfi = Module["dynCall_viififfi"] = createExportWrapper("dynCall_viififfi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiijiii = Module["dynCall_viiiijiii"] = createExportWrapper("dynCall_viiiijiii");
-
-/** @type {function(...*):?} */
-var dynCall_fiiffi = Module["dynCall_fiiffi"] = createExportWrapper("dynCall_fiiffi");
-
-/** @type {function(...*):?} */
-var dynCall_viiififii = Module["dynCall_viiififii"] = createExportWrapper("dynCall_viiififii");
-
-/** @type {function(...*):?} */
-var dynCall_fiiii = Module["dynCall_fiiii"] = createExportWrapper("dynCall_fiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viijiiijiiii = Module["dynCall_viijiiijiiii"] = createExportWrapper("dynCall_viijiiijiiii");
+var dynCall_iiffi = Module["dynCall_iiffi"] = createExportWrapper("dynCall_iiffi");
 
 /** @type {function(...*):?} */
 var dynCall_viiiiiiiiiiiiiiiiiii = Module["dynCall_viiiiiiiiiiiiiiiiiii"] = createExportWrapper("dynCall_viiiiiiiiiiiiiiiiiii");
@@ -18161,61 +18038,19 @@ var dynCall_didi = Module["dynCall_didi"] = createExportWrapper("dynCall_didi");
 var dynCall_fifi = Module["dynCall_fifi"] = createExportWrapper("dynCall_fifi");
 
 /** @type {function(...*):?} */
-var dynCall_jiiji = Module["dynCall_jiiji"] = createExportWrapper("dynCall_jiiji");
+var dynCall_diidi = Module["dynCall_diidi"] = createExportWrapper("dynCall_diidi");
 
 /** @type {function(...*):?} */
-var dynCall_diidi = Module["dynCall_diidi"] = createExportWrapper("dynCall_diidi");
+var dynCall_jiiji = Module["dynCall_jiiji"] = createExportWrapper("dynCall_jiiji");
 
 /** @type {function(...*):?} */
 var dynCall_fiifi = Module["dynCall_fiifi"] = createExportWrapper("dynCall_fiifi");
 
 /** @type {function(...*):?} */
-var dynCall_iiffi = Module["dynCall_iiffi"] = createExportWrapper("dynCall_iiffi");
-
-/** @type {function(...*):?} */
 var dynCall_iiidii = Module["dynCall_iiidii"] = createExportWrapper("dynCall_iiidii");
 
 /** @type {function(...*):?} */
-var dynCall_iiiddji = Module["dynCall_iiiddji"] = createExportWrapper("dynCall_iiiddji");
-
-/** @type {function(...*):?} */
-var dynCall_ddiii = Module["dynCall_ddiii"] = createExportWrapper("dynCall_ddiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiiiiiii = Module["dynCall_iiiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_j = Module["dynCall_j"] = createExportWrapper("dynCall_j");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiiiiji = Module["dynCall_iiiiiiiiiji"] = createExportWrapper("dynCall_iiiiiiiiiji");
-
-/** @type {function(...*):?} */
-var dynCall_vji = Module["dynCall_vji"] = createExportWrapper("dynCall_vji");
-
-/** @type {function(...*):?} */
-var dynCall_viddii = Module["dynCall_viddii"] = createExportWrapper("dynCall_viddii");
-
-/** @type {function(...*):?} */
-var dynCall_vijjii = Module["dynCall_vijjii"] = createExportWrapper("dynCall_vijjii");
-
-/** @type {function(...*):?} */
-var dynCall_viffii = Module["dynCall_viffii"] = createExportWrapper("dynCall_viffii");
-
-/** @type {function(...*):?} */
-var dynCall_jiiijii = Module["dynCall_jiiijii"] = createExportWrapper("dynCall_jiiijii");
-
-/** @type {function(...*):?} */
-var dynCall_viiijiii = Module["dynCall_viiijiii"] = createExportWrapper("dynCall_viiijiii");
-
-/** @type {function(...*):?} */
-var dynCall_jijii = Module["dynCall_jijii"] = createExportWrapper("dynCall_jijii");
-
-/** @type {function(...*):?} */
-var dynCall_iijji = Module["dynCall_iijji"] = createExportWrapper("dynCall_iijji");
-
-/** @type {function(...*):?} */
-var dynCall_iiddi = Module["dynCall_iiddi"] = createExportWrapper("dynCall_iiddi");
+var dynCall_jiiiii = Module["dynCall_jiiiii"] = createExportWrapper("dynCall_jiiiii");
 
 /** @type {function(...*):?} */
 var dynCall_vijiii = Module["dynCall_vijiii"] = createExportWrapper("dynCall_vijiii");
@@ -18225,9 +18060,6 @@ var dynCall_vjjjiiii = Module["dynCall_vjjjiiii"] = createExportWrapper("dynCall
 
 /** @type {function(...*):?} */
 var dynCall_vjiiiii = Module["dynCall_vjiiiii"] = createExportWrapper("dynCall_vjiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_jiiiii = Module["dynCall_jiiiii"] = createExportWrapper("dynCall_jiiiii");
 
 /** @type {function(...*):?} */
 var dynCall_vijji = Module["dynCall_vijji"] = createExportWrapper("dynCall_vijji");
@@ -18246,12 +18078,6 @@ var dynCall_iiiiifi = Module["dynCall_iiiiifi"] = createExportWrapper("dynCall_i
 
 /** @type {function(...*):?} */
 var dynCall_viiiiifiiii = Module["dynCall_viiiiifiiii"] = createExportWrapper("dynCall_viiiiifiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiifiii = Module["dynCall_viiiiifiii"] = createExportWrapper("dynCall_viiiiifiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiiiiiiiii = Module["dynCall_iiiiiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiiiiiii");
 
 /** @type {function(...*):?} */
 var dynCall_viiifffii = Module["dynCall_viiifffii"] = createExportWrapper("dynCall_viiifffii");
@@ -18281,10 +18107,19 @@ var dynCall_iiffii = Module["dynCall_iiffii"] = createExportWrapper("dynCall_iif
 var dynCall_diiiii = Module["dynCall_diiiii"] = createExportWrapper("dynCall_diiiii");
 
 /** @type {function(...*):?} */
+var dynCall_iiiji = Module["dynCall_iiiji"] = createExportWrapper("dynCall_iiiji");
+
+/** @type {function(...*):?} */
 var dynCall_iiidi = Module["dynCall_iiidi"] = createExportWrapper("dynCall_iiidi");
 
 /** @type {function(...*):?} */
+var dynCall_viiifi = Module["dynCall_viiifi"] = createExportWrapper("dynCall_viiifi");
+
+/** @type {function(...*):?} */
 var dynCall_viddfi = Module["dynCall_viddfi"] = createExportWrapper("dynCall_viddfi");
+
+/** @type {function(...*):?} */
+var dynCall_viddii = Module["dynCall_viddii"] = createExportWrapper("dynCall_viddii");
 
 /** @type {function(...*):?} */
 var dynCall_viiifji = Module["dynCall_viiifji"] = createExportWrapper("dynCall_viiifji");
@@ -18362,117 +18197,6 @@ var dynCall_viiiifiiiifi = Module["dynCall_viiiifiiiifi"] = createExportWrapper(
 var dynCall_fiiifi = Module["dynCall_fiiifi"] = createExportWrapper("dynCall_fiiifi");
 
 /** @type {function(...*):?} */
-var dynCall_vijiiiii = Module["dynCall_vijiiiii"] = createExportWrapper("dynCall_vijiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_vijiiii = Module["dynCall_vijiiii"] = createExportWrapper("dynCall_vijiiii");
-
-/** @type {function(...*):?} */
-var dynCall_ijiii = Module["dynCall_ijiii"] = createExportWrapper("dynCall_ijiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiiiiiiii = Module["dynCall_iiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_fiifii = Module["dynCall_fiifii"] = createExportWrapper("dynCall_fiifii");
-
-/** @type {function(...*):?} */
-var dynCall_diidii = Module["dynCall_diidii"] = createExportWrapper("dynCall_diidii");
-
-/** @type {function(...*):?} */
-var dynCall_iifii = Module["dynCall_iifii"] = createExportWrapper("dynCall_iifii");
-
-/** @type {function(...*):?} */
-var dynCall_viidii = Module["dynCall_viidii"] = createExportWrapper("dynCall_viidii");
-
-/** @type {function(...*):?} */
-var dynCall_iiddii = Module["dynCall_iiddii"] = createExportWrapper("dynCall_iiddii");
-
-/** @type {function(...*):?} */
-var dynCall_iidii = Module["dynCall_iidii"] = createExportWrapper("dynCall_iidii");
-
-/** @type {function(...*):?} */
-var dynCall_fji = Module["dynCall_fji"] = createExportWrapper("dynCall_fji");
-
-/** @type {function(...*):?} */
-var dynCall_viffffi = Module["dynCall_viffffi"] = createExportWrapper("dynCall_viffffi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiffi = Module["dynCall_viiiffi"] = createExportWrapper("dynCall_viiiffi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiiiffi = Module["dynCall_viiiiiiiffi"] = createExportWrapper("dynCall_viiiiiiiffi");
-
-/** @type {function(...*):?} */
-var dynCall_viifififfi = Module["dynCall_viifififfi"] = createExportWrapper("dynCall_viifififfi");
-
-/** @type {function(...*):?} */
-var dynCall_viiifififfi = Module["dynCall_viiifififfi"] = createExportWrapper("dynCall_viiifififfi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiffiiiiii = Module["dynCall_viiiiffiiiiii"] = createExportWrapper("dynCall_viiiiffiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiffiiii = Module["dynCall_viiiiffiiii"] = createExportWrapper("dynCall_viiiiffiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiffiii = Module["dynCall_viiiiffiii"] = createExportWrapper("dynCall_viiiiffiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiifiiii = Module["dynCall_iiifiiii"] = createExportWrapper("dynCall_iiifiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiffiiii = Module["dynCall_iiiffiiii"] = createExportWrapper("dynCall_iiiffiiii");
-
-/** @type {function(...*):?} */
-var dynCall_fifffi = Module["dynCall_fifffi"] = createExportWrapper("dynCall_fifffi");
-
-/** @type {function(...*):?} */
-var dynCall_diddfi = Module["dynCall_diddfi"] = createExportWrapper("dynCall_diddfi");
-
-/** @type {function(...*):?} */
-var dynCall_jijjfi = Module["dynCall_jijjfi"] = createExportWrapper("dynCall_jijjfi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiifiii = Module["dynCall_viiiifiii"] = createExportWrapper("dynCall_viiiifiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiifiiii = Module["dynCall_viiifiiii"] = createExportWrapper("dynCall_viiifiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiifiiii = Module["dynCall_viiiifiiii"] = createExportWrapper("dynCall_viiiifiiii");
-
-/** @type {function(...*):?} */
-var dynCall_ifii = Module["dynCall_ifii"] = createExportWrapper("dynCall_ifii");
-
-/** @type {function(...*):?} */
-var dynCall_viffffifi = Module["dynCall_viffffifi"] = createExportWrapper("dynCall_viffffifi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiifffi = Module["dynCall_viiiifffi"] = createExportWrapper("dynCall_viiiifffi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiiiiiiiiiijiiiiii = Module["dynCall_viiiiiiiiiiiiiijiiiiii"] = createExportWrapper("dynCall_viiiiiiiiiiiiiijiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_ifiii = Module["dynCall_ifiii"] = createExportWrapper("dynCall_ifiii");
-
-/** @type {function(...*):?} */
-var dynCall_ifffi = Module["dynCall_ifffi"] = createExportWrapper("dynCall_ifffi");
-
-/** @type {function(...*):?} */
-var dynCall_ffffii = Module["dynCall_ffffii"] = createExportWrapper("dynCall_ffffii");
-
-/** @type {function(...*):?} */
-var dynCall_vffii = Module["dynCall_vffii"] = createExportWrapper("dynCall_vffii");
-
-/** @type {function(...*):?} */
-var dynCall_fiifiifi = Module["dynCall_fiifiifi"] = createExportWrapper("dynCall_fiifiifi");
-
-/** @type {function(...*):?} */
-var dynCall_fiifiii = Module["dynCall_fiifiii"] = createExportWrapper("dynCall_fiifiii");
-
-/** @type {function(...*):?} */
 var dynCall_fifffffi = Module["dynCall_fifffffi"] = createExportWrapper("dynCall_fifffffi");
 
 /** @type {function(...*):?} */
@@ -18509,6 +18233,9 @@ var dynCall_dijii = Module["dynCall_dijii"] = createExportWrapper("dynCall_dijii
 var dynCall_jjjii = Module["dynCall_jjjii"] = createExportWrapper("dynCall_jjjii");
 
 /** @type {function(...*):?} */
+var dynCall_vijiiii = Module["dynCall_vijiiii"] = createExportWrapper("dynCall_vijiiii");
+
+/** @type {function(...*):?} */
 var dynCall_iiijiiii = Module["dynCall_iiijiiii"] = createExportWrapper("dynCall_iiijiiii");
 
 /** @type {function(...*):?} */
@@ -18530,7 +18257,22 @@ var dynCall_iijjjji = Module["dynCall_iijjjji"] = createExportWrapper("dynCall_i
 var dynCall_iijjjjiii = Module["dynCall_iijjjjiii"] = createExportWrapper("dynCall_iijjjjiii");
 
 /** @type {function(...*):?} */
+var dynCall_iiiiiiiiiiiiii = Module["dynCall_iiiiiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiiiiiii = Module["dynCall_iiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiiiiii");
+
+/** @type {function(...*):?} */
 var dynCall_viiijii = Module["dynCall_viiijii"] = createExportWrapper("dynCall_viiijii");
+
+/** @type {function(...*):?} */
+var dynCall_viijiii = Module["dynCall_viijiii"] = createExportWrapper("dynCall_viijiii");
+
+/** @type {function(...*):?} */
+var dynCall_ijii = Module["dynCall_ijii"] = createExportWrapper("dynCall_ijii");
+
+/** @type {function(...*):?} */
+var dynCall_iiiiiji = Module["dynCall_iiiiiji"] = createExportWrapper("dynCall_iiiiiji");
 
 /** @type {function(...*):?} */
 var dynCall_ijjiiii = Module["dynCall_ijjiiii"] = createExportWrapper("dynCall_ijjiiii");
@@ -18551,7 +18293,16 @@ var dynCall_vjiiiiiii = Module["dynCall_vjiiiiiii"] = createExportWrapper("dynCa
 var dynCall_ijiiii = Module["dynCall_ijiiii"] = createExportWrapper("dynCall_ijiiii");
 
 /** @type {function(...*):?} */
+var dynCall_iidii = Module["dynCall_iidii"] = createExportWrapper("dynCall_iidii");
+
+/** @type {function(...*):?} */
+var dynCall_iifii = Module["dynCall_iifii"] = createExportWrapper("dynCall_iifii");
+
+/** @type {function(...*):?} */
 var dynCall_iidiii = Module["dynCall_iidiii"] = createExportWrapper("dynCall_iidiii");
+
+/** @type {function(...*):?} */
+var dynCall_jidi = Module["dynCall_jidi"] = createExportWrapper("dynCall_jidi");
 
 /** @type {function(...*):?} */
 var dynCall_diji = Module["dynCall_diji"] = createExportWrapper("dynCall_diji");
@@ -18561,6 +18312,12 @@ var dynCall_fidi = Module["dynCall_fidi"] = createExportWrapper("dynCall_fidi");
 
 /** @type {function(...*):?} */
 var dynCall_ijjiii = Module["dynCall_ijjiii"] = createExportWrapper("dynCall_ijjiii");
+
+/** @type {function(...*):?} */
+var dynCall_ijiii = Module["dynCall_ijiii"] = createExportWrapper("dynCall_ijiii");
+
+/** @type {function(...*):?} */
+var dynCall_viffffi = Module["dynCall_viffffi"] = createExportWrapper("dynCall_viffffi");
 
 /** @type {function(...*):?} */
 var dynCall_vfffi = Module["dynCall_vfffi"] = createExportWrapper("dynCall_vfffi");
@@ -18620,6 +18377,9 @@ var dynCall_iiiifiiii = Module["dynCall_iiiifiiii"] = createExportWrapper("dynCa
 var dynCall_iiiifiii = Module["dynCall_iiiifiii"] = createExportWrapper("dynCall_iiiifiii");
 
 /** @type {function(...*):?} */
+var dynCall_vijjii = Module["dynCall_vijjii"] = createExportWrapper("dynCall_vijjii");
+
+/** @type {function(...*):?} */
 var dynCall_viiiiiiiijijiii = Module["dynCall_viiiiiiiijijiii"] = createExportWrapper("dynCall_viiiiiiiijijiii");
 
 /** @type {function(...*):?} */
@@ -18644,6 +18404,9 @@ var dynCall_iifiii = Module["dynCall_iifiii"] = createExportWrapper("dynCall_iif
 var dynCall_iiiiifiii = Module["dynCall_iiiiifiii"] = createExportWrapper("dynCall_iiiiifiii");
 
 /** @type {function(...*):?} */
+var dynCall_iiifiiii = Module["dynCall_iiifiiii"] = createExportWrapper("dynCall_iiifiiii");
+
+/** @type {function(...*):?} */
 var dynCall_vifffffi = Module["dynCall_vifffffi"] = createExportWrapper("dynCall_vifffffi");
 
 /** @type {function(...*):?} */
@@ -18662,6 +18425,9 @@ var dynCall_iiiiiiffiiiiiiiiiffffiiii = Module["dynCall_iiiiiiffiiiiiiiiiffffiii
 var dynCall_iiiiiiffiiiiiiiiiiiiiii = Module["dynCall_iiiiiiffiiiiiiiiiiiiiii"] = createExportWrapper("dynCall_iiiiiiffiiiiiiiiiiiiiii");
 
 /** @type {function(...*):?} */
+var dynCall_viffii = Module["dynCall_viffii"] = createExportWrapper("dynCall_viffii");
+
+/** @type {function(...*):?} */
 var dynCall_vififiii = Module["dynCall_vififiii"] = createExportWrapper("dynCall_vififiii");
 
 /** @type {function(...*):?} */
@@ -18675,6 +18441,18 @@ var dynCall_jijji = Module["dynCall_jijji"] = createExportWrapper("dynCall_jijji
 
 /** @type {function(...*):?} */
 var dynCall_viiffffi = Module["dynCall_viiffffi"] = createExportWrapper("dynCall_viiffffi");
+
+/** @type {function(...*):?} */
+var dynCall_fifffi = Module["dynCall_fifffi"] = createExportWrapper("dynCall_fifffi");
+
+/** @type {function(...*):?} */
+var dynCall_ifffi = Module["dynCall_ifffi"] = createExportWrapper("dynCall_ifffi");
+
+/** @type {function(...*):?} */
+var dynCall_fiifii = Module["dynCall_fiifii"] = createExportWrapper("dynCall_fiifii");
+
+/** @type {function(...*):?} */
+var dynCall_fiifiii = Module["dynCall_fiifiii"] = createExportWrapper("dynCall_fiifiii");
 
 /** @type {function(...*):?} */
 var dynCall_viffiii = Module["dynCall_viffiii"] = createExportWrapper("dynCall_viffiii");
@@ -18704,6 +18482,9 @@ var dynCall_viiffiiiiiiiiii = Module["dynCall_viiffiiiiiiiiii"] = createExportWr
 var dynCall_viiffiiiiiii = Module["dynCall_viiffiiiiiii"] = createExportWrapper("dynCall_viiffiiiiiii");
 
 /** @type {function(...*):?} */
+var dynCall_iiiffiiii = Module["dynCall_iiiffiiii"] = createExportWrapper("dynCall_iiiffiiii");
+
+/** @type {function(...*):?} */
 var dynCall_fffffi = Module["dynCall_fffffi"] = createExportWrapper("dynCall_fffffi");
 
 /** @type {function(...*):?} */
@@ -18728,25 +18509,10 @@ var dynCall_vifiiiiii = Module["dynCall_vifiiiiii"] = createExportWrapper("dynCa
 var dynCall_fifii = Module["dynCall_fifii"] = createExportWrapper("dynCall_fifii");
 
 /** @type {function(...*):?} */
+var dynCall_viiiffi = Module["dynCall_viiiffi"] = createExportWrapper("dynCall_viiiffi");
+
+/** @type {function(...*):?} */
 var dynCall_viiiiiffi = Module["dynCall_viiiiiffi"] = createExportWrapper("dynCall_viiiiiffi");
-
-/** @type {function(...*):?} */
-var dynCall_viiidii = Module["dynCall_viiidii"] = createExportWrapper("dynCall_viiidii");
-
-/** @type {function(...*):?} */
-var dynCall_ijiiiiiiiii = Module["dynCall_ijiiiiiiiii"] = createExportWrapper("dynCall_ijiiiiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iijjijii = Module["dynCall_iijjijii"] = createExportWrapper("dynCall_iijjijii");
-
-/** @type {function(...*):?} */
-var dynCall_iiiiijji = Module["dynCall_iiiiijji"] = createExportWrapper("dynCall_iiiiijji");
-
-/** @type {function(...*):?} */
-var dynCall_viiiijii = Module["dynCall_viiiijii"] = createExportWrapper("dynCall_viiiijii");
-
-/** @type {function(...*):?} */
-var dynCall_jiijii = Module["dynCall_jiijii"] = createExportWrapper("dynCall_jiijii");
 
 /** @type {function(...*):?} */
 var dynCall_viiiidii = Module["dynCall_viiiidii"] = createExportWrapper("dynCall_viiiidii");
@@ -18758,52 +18524,19 @@ var dynCall_vidiiiii = Module["dynCall_vidiiiii"] = createExportWrapper("dynCall
 var dynCall_viiidjii = Module["dynCall_viiidjii"] = createExportWrapper("dynCall_viiidjii");
 
 /** @type {function(...*):?} */
+var dynCall_viidii = Module["dynCall_viidii"] = createExportWrapper("dynCall_viidii");
+
+/** @type {function(...*):?} */
 var dynCall_viijijji = Module["dynCall_viijijji"] = createExportWrapper("dynCall_viijijji");
 
 /** @type {function(...*):?} */
 var dynCall_vijijji = Module["dynCall_vijijji"] = createExportWrapper("dynCall_vijijji");
 
 /** @type {function(...*):?} */
-var dynCall_viddddi = Module["dynCall_viddddi"] = createExportWrapper("dynCall_viddddi");
+var dynCall_ifiii = Module["dynCall_ifiii"] = createExportWrapper("dynCall_ifiii");
 
 /** @type {function(...*):?} */
-var dynCall_vidddi = Module["dynCall_vidddi"] = createExportWrapper("dynCall_vidddi");
-
-/** @type {function(...*):?} */
-var dynCall_vidddddddddi = Module["dynCall_vidddddddddi"] = createExportWrapper("dynCall_vidddddddddi");
-
-/** @type {function(...*):?} */
-var dynCall_viddddddddddddddddi = Module["dynCall_viddddddddddddddddi"] = createExportWrapper("dynCall_viddddddddddddddddi");
-
-/** @type {function(...*):?} */
-var dynCall_vifffffffffi = Module["dynCall_vifffffffffi"] = createExportWrapper("dynCall_vifffffffffi");
-
-/** @type {function(...*):?} */
-var dynCall_viffffffffffffffffi = Module["dynCall_viffffffffffffffffi"] = createExportWrapper("dynCall_viffffffffffffffffi");
-
-/** @type {function(...*):?} */
-var dynCall_iiffiifi = Module["dynCall_iiffiifi"] = createExportWrapper("dynCall_iiffiifi");
-
-/** @type {function(...*):?} */
-var dynCall_viijiiiii = Module["dynCall_viijiiiii"] = createExportWrapper("dynCall_viijiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiiiijii = Module["dynCall_viiiiiiijii"] = createExportWrapper("dynCall_viiiiiiijii");
-
-/** @type {function(...*):?} */
-var dynCall_vijiiji = Module["dynCall_vijiiji"] = createExportWrapper("dynCall_vijiiji");
-
-/** @type {function(...*):?} */
-var dynCall_viijiiiiii = Module["dynCall_viijiiiiii"] = createExportWrapper("dynCall_viijiiiiii");
-
-/** @type {function(...*):?} */
-var dynCall_jiidi = Module["dynCall_jiidi"] = createExportWrapper("dynCall_jiidi");
-
-/** @type {function(...*):?} */
-var dynCall_viiiijjiiii = Module["dynCall_viiiijjiiii"] = createExportWrapper("dynCall_viiiijjiiii");
-
-/** @type {function(...*):?} */
-var dynCall_viiiiji = Module["dynCall_viiiiji"] = createExportWrapper("dynCall_viiiiji");
+var dynCall_viiiifiii = Module["dynCall_viiiifiii"] = createExportWrapper("dynCall_viiiifiii");
 
 /** @type {function(...*):?} */
 var dynCall_viifffffi = Module["dynCall_viifffffi"] = createExportWrapper("dynCall_viifffffi");
@@ -18842,6 +18575,9 @@ var dynCall_jjiiii = Module["dynCall_jjiiii"] = createExportWrapper("dynCall_jji
 var dynCall_jjiiiii = Module["dynCall_jjiiiii"] = createExportWrapper("dynCall_jjiiiii");
 
 /** @type {function(...*):?} */
+var dynCall_viijiiiiii = Module["dynCall_viijiiiiii"] = createExportWrapper("dynCall_viijiiiiii");
+
+/** @type {function(...*):?} */
 var dynCall_jijjji = Module["dynCall_jijjji"] = createExportWrapper("dynCall_jijjji");
 
 /** @type {function(...*):?} */
@@ -18864,6 +18600,9 @@ var dynCall_ijjjiijii = Module["dynCall_ijjjiijii"] = createExportWrapper("dynCa
 
 /** @type {function(...*):?} */
 var dynCall_vijiiiiii = Module["dynCall_vijiiiiii"] = createExportWrapper("dynCall_vijiiiiii");
+
+/** @type {function(...*):?} */
+var dynCall_fji = Module["dynCall_fji"] = createExportWrapper("dynCall_fji");
 
 /** @type {function(...*):?} */
 var dynCall_dfi = Module["dynCall_dfi"] = createExportWrapper("dynCall_dfi");
@@ -18926,6 +18665,9 @@ var dynCall_viijjji = Module["dynCall_viijjji"] = createExportWrapper("dynCall_v
 var dynCall_vdii = Module["dynCall_vdii"] = createExportWrapper("dynCall_vdii");
 
 /** @type {function(...*):?} */
+var dynCall_viiiijii = Module["dynCall_viiiijii"] = createExportWrapper("dynCall_viiiijii");
+
+/** @type {function(...*):?} */
 var dynCall_viiijji = Module["dynCall_viiijji"] = createExportWrapper("dynCall_viiijji");
 
 /** @type {function(...*):?} */
@@ -18977,15 +18719,6 @@ var dynCall_iiiiidi = Module["dynCall_iiiiidi"] = createExportWrapper("dynCall_i
 var dynCall_viiiiidi = Module["dynCall_viiiiidi"] = createExportWrapper("dynCall_viiiiidi");
 
 /** @type {function(...*):?} */
-var dynCall_iiddiiii = Module["dynCall_iiddiiii"] = createExportWrapper("dynCall_iiddiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iijjiiii = Module["dynCall_iijjiiii"] = createExportWrapper("dynCall_iijjiiii");
-
-/** @type {function(...*):?} */
-var dynCall_iiffiiii = Module["dynCall_iiffiiii"] = createExportWrapper("dynCall_iiffiiii");
-
-/** @type {function(...*):?} */
 var dynCall_viijjjjii = Module["dynCall_viijjjjii"] = createExportWrapper("dynCall_viijjjjii");
 
 /** @type {function(...*):?} */
@@ -19011,12 +18744,6 @@ var dynCall_jiiiiji = Module["dynCall_jiiiiji"] = createExportWrapper("dynCall_j
 
 /** @type {function(...*):?} */
 var dynCall_fiiiifi = Module["dynCall_fiiiifi"] = createExportWrapper("dynCall_fiiiifi");
-
-/** @type {function(...*):?} */
-var dynCall_iiddji = Module["dynCall_iiddji"] = createExportWrapper("dynCall_iiddji");
-
-/** @type {function(...*):?} */
-var dynCall_iiffji = Module["dynCall_iiffji"] = createExportWrapper("dynCall_iiffji");
 
 /** @type {function(...*):?} */
 var dynCall_didii = Module["dynCall_didii"] = createExportWrapper("dynCall_didii");
@@ -19053,9 +18780,6 @@ var dynCall_ijjiiiiii = Module["dynCall_ijjiiiiii"] = createExportWrapper("dynCa
 
 /** @type {function(...*):?} */
 var dynCall_vdi = Module["dynCall_vdi"] = createExportWrapper("dynCall_vdi");
-
-/** @type {function(...*):?} */
-var dynCall_vddii = Module["dynCall_vddii"] = createExportWrapper("dynCall_vddii");
 
 /** @type {function(...*):?} */
 var dynCall_vif = Module["dynCall_vif"] = createExportWrapper("dynCall_vif");
@@ -19199,9 +18923,6 @@ var dynCall_iiiiiifffiiifiii = Module["dynCall_iiiiiifffiiifiii"] = createExport
 var dynCall_viid = Module["dynCall_viid"] = createExportWrapper("dynCall_viid");
 
 /** @type {function(...*):?} */
-var dynCall_viiif = Module["dynCall_viiif"] = createExportWrapper("dynCall_viiif");
-
-/** @type {function(...*):?} */
 var dynCall_fiiiif = Module["dynCall_fiiiif"] = createExportWrapper("dynCall_fiiiif");
 
 /** @type {function(...*):?} */
@@ -19238,19 +18959,13 @@ var dynCall_vij = Module["dynCall_vij"] = createExportWrapper("dynCall_vij");
 var dynCall_vfff = Module["dynCall_vfff"] = createExportWrapper("dynCall_vfff");
 
 /** @type {function(...*):?} */
-var dynCall_d = Module["dynCall_d"] = createExportWrapper("dynCall_d");
-
-/** @type {function(...*):?} */
 var dynCall_f = Module["dynCall_f"] = createExportWrapper("dynCall_f");
 
 /** @type {function(...*):?} */
+var dynCall_viiif = Module["dynCall_viiif"] = createExportWrapper("dynCall_viiif");
+
+/** @type {function(...*):?} */
 var dynCall_ff = Module["dynCall_ff"] = createExportWrapper("dynCall_ff");
-
-/** @type {function(...*):?} */
-var dynCall_viififf = Module["dynCall_viififf"] = createExportWrapper("dynCall_viififf");
-
-/** @type {function(...*):?} */
-var dynCall_vififfi = Module["dynCall_vififfi"] = createExportWrapper("dynCall_vififfi");
 
 /** @type {function(...*):?} */
 var dynCall_iiiiiiffiiiiiiiiiffffiii = Module["dynCall_iiiiiiffiiiiiiiiiffffiii"] = createExportWrapper("dynCall_iiiiiiffiiiiiiiiiffffiii");
@@ -19266,6 +18981,9 @@ var dynCall_viiffiiiiii = Module["dynCall_viiffiiiiii"] = createExportWrapper("d
 
 /** @type {function(...*):?} */
 var dynCall_viiiiiiiijiii = Module["dynCall_viiiiiiiijiii"] = createExportWrapper("dynCall_viiiiiiiijiii");
+
+/** @type {function(...*):?} */
+var dynCall_d = Module["dynCall_d"] = createExportWrapper("dynCall_d");
 
 
 function invoke_ii(index,a1) {
@@ -19477,105 +19195,6 @@ function invoke_ddiii(index,a1,a2,a3,a4) {
   }
 }
 
-function invoke_iiiidii(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    return dynCall_iiiidii(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iiiifii(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    return dynCall_iiiifii(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_fi(index,a1) {
-  var sp = stackSave();
-  try {
-    return dynCall_fi(index,a1);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iiifi(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    return dynCall_iiifi(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iiifii(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    return dynCall_iiifii(index,a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viifi(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    dynCall_viifi(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_fii(index,a1,a2) {
-  var sp = stackSave();
-  try {
-    return dynCall_fii(index,a1,a2);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiffii(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    dynCall_viiffii(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
-  var sp = stackSave();
-  try {
-    dynCall_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
 function invoke_vidi(index,a1,a2,a3) {
   var sp = stackSave();
   try {
@@ -19587,10 +19206,21 @@ function invoke_vidi(index,a1,a2,a3) {
   }
 }
 
-function invoke_viidi(index,a1,a2,a3,a4) {
+function invoke_fiiii(index,a1,a2,a3,a4) {
   var sp = stackSave();
   try {
-    dynCall_viidi(index,a1,a2,a3,a4);
+    return dynCall_fiiii(index,a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_diiii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    return dynCall_diiii(index,a1,a2,a3,a4);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -19609,32 +19239,10 @@ function invoke_dii(index,a1,a2) {
   }
 }
 
-function invoke_vifi(index,a1,a2,a3) {
+function invoke_fii(index,a1,a2) {
   var sp = stackSave();
   try {
-    dynCall_vifi(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_vifii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    dynCall_vifii(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viifii(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    dynCall_viifii(index,a1,a2,a3,a4,a5);
+    return dynCall_fii(index,a1,a2);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -19646,6 +19254,61 @@ function invoke_viiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) {
   var sp = stackSave();
   try {
     dynCall_viiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+  var sp = stackSave();
+  try {
+    dynCall_viiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiifii(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiiifii(index,a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_vifi(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    dynCall_vifi(index,a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viifi(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    dynCall_viifi(index,a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiidii(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiiidii(index,a1,a2,a3,a4,a5,a6);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -19675,10 +19338,21 @@ function invoke_iiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
   }
 }
 
-function invoke_viiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+function invoke_fffi(index,a1,a2,a3) {
   var sp = stackSave();
   try {
-    dynCall_viiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+    return dynCall_fffi(index,a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
+  var sp = stackSave();
+  try {
+    dynCall_viiiiiii(index,a1,a2,a3,a4,a5,a6,a7);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -19708,6 +19382,105 @@ function invoke_idi(index,a1,a2) {
   }
 }
 
+function invoke_iidi(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return dynCall_iidi(index,a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iifi(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return dynCall_iifi(index,a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_dddi(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return dynCall_dddi(index,a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiffi(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    dynCall_viiffi(index,a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiifi(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    dynCall_viiiifi(index,a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiidi(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    dynCall_viiiidi(index,a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiiiiidii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiiiiiidii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiifii(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiifii(index,a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_vifii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    dynCall_vifii(index,a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
 function invoke_viiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12) {
   var sp = stackSave();
   try {
@@ -19723,6 +19496,17 @@ function invoke_viiiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13)
   var sp = stackSave();
   try {
     dynCall_viiiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viidi(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    dynCall_viidi(index,a1,a2,a3,a4);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -19807,142 +19591,10 @@ function invoke_iiiifi(index,a1,a2,a3,a4,a5) {
   }
 }
 
-function invoke_vififfii(index,a1,a2,a3,a4,a5,a6,a7) {
+function invoke_iiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
   var sp = stackSave();
   try {
-    dynCall_vififfii(index,a1,a2,a3,a4,a5,a6,a7);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiiidi(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    dynCall_viiiidi(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iiiiiiidii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
-  var sp = stackSave();
-  try {
-    return dynCall_iiiiiiidii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_fiiii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    return dynCall_fiiii(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_di(index,a1) {
-  var sp = stackSave();
-  try {
-    return dynCall_di(index,a1);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iifi(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_iifi(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiiifi(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    dynCall_viiiifi(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_fffi(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_fffi(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iidi(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_iidi(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_diiii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    return dynCall_diiii(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_dddi(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_dddi(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiffi(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    dynCall_viiffi(index,a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viififfi(index,a1,a2,a3,a4,a5,a6,a7) {
-  var sp = stackSave();
-  try {
-    dynCall_viififfi(index,a1,a2,a3,a4,a5,a6,a7);
+    return dynCall_iiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -19961,10 +19613,43 @@ function invoke_viffi(index,a1,a2,a3,a4) {
   }
 }
 
-function invoke_iiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
+function invoke_viifii(index,a1,a2,a3,a4,a5) {
   var sp = stackSave();
   try {
-    return dynCall_iiiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11);
+    dynCall_viifii(index,a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_fi(index,a1) {
+  var sp = stackSave();
+  try {
+    return dynCall_fi(index,a1);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiifi(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiifi(index,a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_di(index,a1) {
+  var sp = stackSave();
+  try {
+    return dynCall_di(index,a1);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20071,28 +19756,6 @@ function invoke_j(index) {
   }
 }
 
-function invoke_iijiii(index,a1,a2,a3,a4,a5,a6) {
-  var sp = stackSave();
-  try {
-    return dynCall_iijiii(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jiii(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_jiii(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
 function invoke_iji(index,a1,a2,a3) {
   var sp = stackSave();
   try {
@@ -20104,10 +19767,10 @@ function invoke_iji(index,a1,a2,a3) {
   }
 }
 
-function invoke_iiiijii(index,a1,a2,a3,a4,a5,a6,a7) {
+function invoke_jjji(index,a1,a2,a3,a4,a5) {
   var sp = stackSave();
   try {
-    return dynCall_iiiijii(index,a1,a2,a3,a4,a5,a6,a7);
+    return dynCall_jjji(index,a1,a2,a3,a4,a5);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20115,32 +19778,10 @@ function invoke_iiiijii(index,a1,a2,a3,a4,a5,a6,a7) {
   }
 }
 
-function invoke_iiijii(index,a1,a2,a3,a4,a5,a6) {
+function invoke_iijiii(index,a1,a2,a3,a4,a5,a6) {
   var sp = stackSave();
   try {
-    return dynCall_iiijii(index,a1,a2,a3,a4,a5,a6);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiji(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    dynCall_viiji(index,a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viji(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    dynCall_viji(index,a1,a2,a3,a4);
+    return dynCall_iijiii(index,a1,a2,a3,a4,a5,a6);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20159,10 +19800,10 @@ function invoke_vijii(index,a1,a2,a3,a4,a5) {
   }
 }
 
-function invoke_viiiji(index,a1,a2,a3,a4,a5,a6) {
+function invoke_jiii(index,a1,a2,a3) {
   var sp = stackSave();
   try {
-    dynCall_viiiji(index,a1,a2,a3,a4,a5,a6);
+    return dynCall_jiii(index,a1,a2,a3);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20181,10 +19822,10 @@ function invoke_iiji(index,a1,a2,a3,a4) {
   }
 }
 
-function invoke_iijii(index,a1,a2,a3,a4,a5) {
+function invoke_jijii(index,a1,a2,a3,a4,a5) {
   var sp = stackSave();
   try {
-    return dynCall_iijii(index,a1,a2,a3,a4,a5);
+    return dynCall_jijii(index,a1,a2,a3,a4,a5);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20192,10 +19833,10 @@ function invoke_iijii(index,a1,a2,a3,a4,a5) {
   }
 }
 
-function invoke_iiiijjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+function invoke_iiiijii(index,a1,a2,a3,a4,a5,a6,a7) {
   var sp = stackSave();
   try {
-    return dynCall_iiiijjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+    return dynCall_iiiijii(index,a1,a2,a3,a4,a5,a6,a7);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20203,10 +19844,10 @@ function invoke_iiiijjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
   }
 }
 
-function invoke_viijii(index,a1,a2,a3,a4,a5,a6) {
+function invoke_viji(index,a1,a2,a3,a4) {
   var sp = stackSave();
   try {
-    dynCall_viijii(index,a1,a2,a3,a4,a5,a6);
+    dynCall_viji(index,a1,a2,a3,a4);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20214,10 +19855,10 @@ function invoke_viijii(index,a1,a2,a3,a4,a5,a6) {
   }
 }
 
-function invoke_iijjiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
+function invoke_viiji(index,a1,a2,a3,a4,a5) {
   var sp = stackSave();
   try {
-    return dynCall_iijjiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11);
+    dynCall_viiji(index,a1,a2,a3,a4,a5);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20225,10 +19866,10 @@ function invoke_iijjiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
   }
 }
 
-function invoke_iijiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+function invoke_dji(index,a1,a2,a3) {
   var sp = stackSave();
   try {
-    return dynCall_iijiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+    return dynCall_dji(index,a1,a2,a3);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20247,10 +19888,65 @@ function invoke_ijji(index,a1,a2,a3,a4,a5) {
   }
 }
 
-function invoke_jjji(index,a1,a2,a3,a4,a5) {
+function invoke_jji(index,a1,a2,a3) {
   var sp = stackSave();
   try {
-    return dynCall_jjji(index,a1,a2,a3,a4,a5);
+    return dynCall_jji(index,a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viidiji(index,a1,a2,a3,a4,a5,a6,a7) {
+  var sp = stackSave();
+  try {
+    dynCall_viidiji(index,a1,a2,a3,a4,a5,a6,a7);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viijii(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    dynCall_viijii(index,a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_jjii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    return dynCall_jjii(index,a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiiji(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    dynCall_viiiji(index,a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viijiiijiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13) {
+  var sp = stackSave();
+  try {
+    dynCall_viijiiijiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20291,138 +19987,6 @@ function invoke_iiiiij(index,a1,a2,a3,a4,a5,a6) {
   }
 }
 
-function invoke_jidi(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_jidi(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jjii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    return dynCall_jjii(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jijii(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    return dynCall_jijii(index,a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_ijii(index,a1,a2,a3,a4) {
-  var sp = stackSave();
-  try {
-    return dynCall_ijii(index,a1,a2,a3,a4);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iiiji(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    return dynCall_iiiji(index,a1,a2,a3,a4,a5);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_dji(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_dji(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_iijjjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
-  var sp = stackSave();
-  try {
-    return dynCall_iijjjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viijiii(index,a1,a2,a3,a4,a5,a6,a7) {
-  var sp = stackSave();
-  try {
-    dynCall_viijiii(index,a1,a2,a3,a4,a5,a6,a7);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viidiji(index,a1,a2,a3,a4,a5,a6,a7) {
-  var sp = stackSave();
-  try {
-    dynCall_viidiji(index,a1,a2,a3,a4,a5,a6,a7);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jji(index,a1,a2,a3) {
-  var sp = stackSave();
-  try {
-    return dynCall_jji(index,a1,a2,a3);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viiiijiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
-  var sp = stackSave();
-  try {
-    dynCall_viiiijiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_viijiiijiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13) {
-  var sp = stackSave();
-  try {
-    dynCall_viijiiijiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
 function invoke_iiiiiiiiiji(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
   var sp = stackSave();
   try {
@@ -20445,10 +20009,65 @@ function invoke_vji(index,a1,a2,a3) {
   }
 }
 
-function invoke_jiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) {
+function invoke_iijjjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
   var sp = stackSave();
   try {
-    return dynCall_jiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10);
+    return dynCall_iijjjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iijii(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    return dynCall_iijii(index,a1,a2,a3,a4,a5);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiiijjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiiijjii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iijjiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11) {
+  var sp = stackSave();
+  try {
+    return dynCall_iijjiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iijiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9) {
+  var sp = stackSave();
+  try {
+    return dynCall_iijiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iiijii(index,a1,a2,a3,a4,a5,a6) {
+  var sp = stackSave();
+  try {
+    return dynCall_iiijii(index,a1,a2,a3,a4,a5,a6);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20471,6 +20090,28 @@ function invoke_iijji(index,a1,a2,a3,a4,a5,a6) {
   var sp = stackSave();
   try {
     return dynCall_iijji(index,a1,a2,a3,a4,a5,a6);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_jiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10) {
+  var sp = stackSave();
+  try {
+    return dynCall_jiiiiiiiiii(index,a1,a2,a3,a4,a5,a6,a7,a8,a9,a10);
+  } catch(e) {
+    stackRestore(sp);
+    if (e !== e+0) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_jiiiii(index,a1,a2,a3,a4,a5) {
+  var sp = stackSave();
+  try {
+    return dynCall_jiiiii(index,a1,a2,a3,a4,a5);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20504,17 +20145,6 @@ function invoke_vjiiiii(index,a1,a2,a3,a4,a5,a6,a7) {
   var sp = stackSave();
   try {
     dynCall_vjiiiii(index,a1,a2,a3,a4,a5,a6,a7);
-  } catch(e) {
-    stackRestore(sp);
-    if (e !== e+0) throw e;
-    _setThrew(1, 0);
-  }
-}
-
-function invoke_jiiiii(index,a1,a2,a3,a4,a5) {
-  var sp = stackSave();
-  try {
-    return dynCall_jiiiii(index,a1,a2,a3,a4,a5);
   } catch(e) {
     stackRestore(sp);
     if (e !== e+0) throw e;
@@ -20925,10 +20555,6 @@ unexportedRuntimeFunction('wr', false);
 unexportedRuntimeFunction('wr__user', false);
 unexportedRuntimeFunction('jsWebRequestGetResponseHeaderString', false);
 unexportedRuntimeFunction('jsWebRequestGetResponseHeaderString__user', false);
-unexportedRuntimeFunction('instances', false);
-unexportedRuntimeFunction('instances__user', false);
-unexportedRuntimeFunction('GlobalData', false);
-unexportedRuntimeFunction('GlobalData__user', false);
 unexportedRuntimeFunction('warnOnce', false);
 unexportedRuntimeFunction('stackSave', false);
 unexportedRuntimeFunction('stackRestore', false);
