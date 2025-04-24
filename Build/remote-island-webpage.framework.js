@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5033200: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5033261: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5033325: function() {return Module.webglContextAttributes.powerPreference;},  
- 5033383: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5033438: function($0) {performance.now = function() { return $0; };},  
- 5033486: function($0) {performance.now = function() { return $0; };},  
- 5033534: function() {performance.now = Module['emscripten_get_now_backup'];}
+  5033712: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5033773: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5033837: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5033895: function() {Module['emscripten_get_now_backup'] = performance.now;},  
+ 5033950: function($0) {performance.now = function() { return $0; };},  
+ 5033998: function($0) {performance.now = function() { return $0; };},  
+ 5034046: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -2601,20 +2601,66 @@ var ASM_CONSTS = {
     }
 
   function _InitializeFirebase() {
-        if (!firebase.apps.length) {
-          firebase.initializeApp({
-            apiKey: "AIzaSyDdZu-G5Nz73j7MPeCEefbikV-TxSWxq1M",
-            authDomain: "sori-3353a.firebaseapp.com",
-            databaseURL: "https://sori-3353a-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "sori-3353a",
-            storageBucket: "sori-3353a.firebasestorage.app",
-            messagingSenderId: "319362189609",
-            appId: "1:319362189609:web:e7c9e7f4ecc18309c8cf38",
-            measurementId: "G-HV1112GG37"
+    if (!firebase.apps.length) {
+      firebase.initializeApp({
+        apiKey: "AIzaSyDdZu-G5Nz73j7MPeCEefbikV-TxSWxq1M",
+        authDomain: "sori-3353a.firebaseapp.com",
+        databaseURL: "https://sori-3353a-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId: "sori-3353a",
+        storageBucket: "sori-3353a.firebasestorage.app",
+        messagingSenderId: "319362189609",
+        appId: "1:319362189609:web:e7c9e7f4ecc18309c8cf38",
+        measurementId: "G-HV1112GG37"
+      });
+      console.log("🔥 Firebase initialized");
+  
+      // 🔐 Set auth persistence
+      firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+        .then(() => {
+          console.log("🔒 Persistence set to LOCAL");
+  
+          // 🧠 Check for existing user
+          firebase.auth().onAuthStateChanged((user) => {
+            if (user) {
+              const username = user.displayName;
+              const authUID = user.uid;
+              console.log(`🟢 User already signed in: ${username}`);
+  
+              // Fetch user's ID from the database
+              firebase.database().ref("Users/" + username).once("value")
+                .then(snapshot => {
+                  if (snapshot.exists()) {
+                    const userData = snapshot.val();
+                    if (userData.authUID === authUID) {
+                      const userID = userData.UserID;
+                      const response = JSON.stringify({Successful: true, ID: userID, DisplayName: username});
+                      Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                    } else {
+                      console.log("❌ Auth UID mismatch on auto-login");
+                      const response = JSON.stringify({Successful: false, ErrorMessage: "Unauthorized Acess" });
+                      Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                    }
+                  } else {
+                    console.log("❌ No user data found for auto-login");
+                    const response = JSON.stringify({Successful: false, ErrorMessage: "User data does not exist." });
+                    Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                  }
+                })
+                .catch(error => {
+                  console.error("❌ Error retrieving user data during auto-login:", error);
+                  const response = JSON.stringify({Successful: false, ErrorMessage: error.code });
+                  Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                });
+            } else {
+              console.log("🔴 No user is signed in.");
+            }
           });
-          console.log("🔥 Firebase initialized");
-        }
-      }
+  
+        }).catch((error) => {
+          console.error("❌ Error setting persistence:", error);
+        });
+    }
+  }
 
   var JS_Accelerometer = null;
   
