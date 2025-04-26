@@ -1994,13 +1994,13 @@ var tempI64;
 // === Body ===
 
 var ASM_CONSTS = {
-  5033712: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
- 5033773: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
- 5033837: function() {return Module.webglContextAttributes.powerPreference;},  
- 5033895: function() {Module['emscripten_get_now_backup'] = performance.now;},  
- 5033950: function($0) {performance.now = function() { return $0; };},  
+  5033760: function() {return Module.webglContextAttributes.premultipliedAlpha;},  
+ 5033821: function() {return Module.webglContextAttributes.preserveDrawingBuffer;},  
+ 5033885: function() {return Module.webglContextAttributes.powerPreference;},  
+ 5033943: function() {Module['emscripten_get_now_backup'] = performance.now;},  
  5033998: function($0) {performance.now = function() { return $0; };},  
- 5034046: function() {performance.now = Module['emscripten_get_now_backup'];}
+ 5034046: function($0) {performance.now = function() { return $0; };},  
+ 5034094: function() {performance.now = Module['emscripten_get_now_backup'];}
 };
 
 
@@ -2621,6 +2621,13 @@ var ASM_CONSTS = {
   
           // 🧠 Check for existing user
           firebase.auth().onAuthStateChanged((user) => {
+  
+            if (Module.manualSignInJustHappened) {
+             // Skip auto-login logic because it's a fresh sign-in
+              Module.manualSignInJustHappened = false; // reset it
+              return;
+            }  
+  
             if (user) {
               const username = user.displayName;
               const authUID = user.uid;
@@ -2634,22 +2641,22 @@ var ASM_CONSTS = {
                     if (userData.authUID === authUID) {
                       const userID = userData.UserID;
                       const response = JSON.stringify({Successful: true, ID: userID, DisplayName: username});
-                      Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                      Module.SendMessage("FirebaseAuthentication", "OnUserPreviouslyLogged", response);
                     } else {
                       console.log("❌ Auth UID mismatch on auto-login");
                       const response = JSON.stringify({Successful: false, ErrorMessage: "Unauthorized Acess" });
-                      Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                      Module.SendMessage("FirebaseAuthentication", "OnUserPreviouslyLogged", response);
                     }
                   } else {
                     console.log("❌ No user data found for auto-login");
                     const response = JSON.stringify({Successful: false, ErrorMessage: "User data does not exist." });
-                    Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                    Module.SendMessage("FirebaseAuthentication", "OnUserPreviouslyLogged", response);
                   }
                 })
                 .catch(error => {
                   console.error("❌ Error retrieving user data during auto-login:", error);
                   const response = JSON.stringify({Successful: false, ErrorMessage: error.code });
-                  Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+                  Module.SendMessage("FirebaseAuthentication", "OnUserPreviouslyLogged", response);
                 });
             } else {
               console.log("🔴 No user is signed in.");
@@ -5331,6 +5338,44 @@ var ASM_CONSTS = {
   
       }
 
+  function _JoinWithPreviousUser() {
+      const user = firebase.auth().currentUser;
+      if (user) {
+        const username = user.displayName;
+        const authUID = user.uid;
+  
+        firebase.database().ref("Users/" + username).once("value")
+          .then(snapshot => {
+            if (snapshot.exists()) {
+              const userData = snapshot.val();
+              if (userData.authUID === authUID) {
+                const userID = userData.UserID;
+                const response = JSON.stringify({Successful: true, ID: userID, DisplayName: username});
+                Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+              } else {
+                console.log("❌ Auth UID mismatch during JoinWithPreviousUser");
+                const response = JSON.stringify({Successful: false, ErrorMessage: "Unauthorized Access" });
+                Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+              }
+            } else {
+              console.log("❌ No user data found during JoinWithPreviousUser");
+              const response = JSON.stringify({Successful: false, ErrorMessage: "User data does not exist." });
+              Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+            }
+          })
+          .catch(error => {
+            console.error("❌ Error retrieving user data during JoinWithPreviousUser:", error);
+            const response = JSON.stringify({Successful: false, ErrorMessage: error.code });
+            Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+          });
+  
+      } else {
+        console.log("🔴 No signed-in user when JoinWithPreviousUser called");
+        const response = JSON.stringify({Successful: false, ErrorMessage: "No signed-in user" });
+        Module.SendMessage("FirebaseAuthentication", "OnUserAuthenticated", response);
+      }
+    }
+
   function _KickPlayer(sessionIdPtr, kickedPlayerUIDPtr) {
           const sessionId = UTF8ToString(sessionIdPtr);
           const kickedPlayerUID = UTF8ToString(kickedPlayerUIDPtr);
@@ -5788,7 +5833,8 @@ var ASM_CONSTS = {
           const username = UTF8ToString(usernamePtr);
           const password = UTF8ToString(passwordPtr);
           const email = username + "@SurvivorsOfRemoteIsland.com";
-      
+          Module.manualSignInJustHappened = true;
+  
           firebase.auth().createUserWithEmailAndPassword(email, password)
               .then((userCredential) => {
   
@@ -6176,6 +6222,7 @@ var ASM_CONSTS = {
       const username = UTF8ToString(usernamePtr);
       const password = UTF8ToString(passwordPtr);
       const email = username + "@SurvivorsOfRemoteIsland.com";
+      Module.manualSignInJustHappened = true;
   
       firebase.auth().signInWithEmailAndPassword(email, password)
         .then((userCredential) => {
@@ -17511,6 +17558,7 @@ var asmLibraryArg = {
   "JS_WebRequest_SetTimeout": _JS_WebRequest_SetTimeout,
   "JoinSession": _JoinSession,
   "JoinTeam": _JoinTeam,
+  "JoinWithPreviousUser": _JoinWithPreviousUser,
   "KickPlayer": _KickPlayer,
   "ListenForChatUpdates": _ListenForChatUpdates,
   "ListenForGlobalVotes": _ListenForGlobalVotes,
